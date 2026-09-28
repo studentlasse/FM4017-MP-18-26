@@ -8,10 +8,16 @@ from sklearn.preprocessing import StandardScaler
 from torch.utils.data import TensorDataset, DataLoader
 
 from lstm.lstm_model import LSTMModel
-from data_preperation import create_sequences
 
 DATASET_PATH = "ml_dataset.csv" # from preprocessing/dataset_conversion.py
 
+def create_sequences(data, seq_length):
+    """Create sequences of data for LSTM input."""
+    sequences = []
+    for i in range(len(data) - seq_length):
+        seq = data[i:i + seq_length]
+        sequences.append(seq)
+    return np.array(sequences)
 
 def load_dataset(file_path=DATASET_PATH):
     data = pd.read_csv(file_path, parse_dates=["delivery_day", "datetime"])
