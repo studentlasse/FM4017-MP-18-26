@@ -1,4 +1,5 @@
 import sqlite3
+import numpy as np
 import pandas as pd
 import time
 from datetime import datetime
@@ -14,213 +15,388 @@ log("Connecting to database...")
 conn = sqlite3.connect(DB_PATH)
 
 query = """
-WITH flow_features AS (
-    SELECT
-        bz.zone_id,
-        f.delivery_day,
-        f.hour,
-        SUM(
-            CASE
-                WHEN f.to_zone_id = bz.zone_id
-                THEN f.flow_value
-                ELSE 0
-            END
-        ) AS incoming_flow,
-        SUM(
-            CASE
-                WHEN f.from_zone_id = bz.zone_id
-                THEN f.flow_value
-                ELSE 0
-            END
-        ) AS outgoing_flow
-    FROM BiddingZones bz
-    LEFT JOIN flows f
-        ON bz.zone_id IN (f.from_zone_id, f.to_zone_id)
-    GROUP BY
-        bz.zone_id,
-        f.delivery_day,
-        f.hour
-),
-
-capacity_features AS (
-    SELECT
-        bz.zone_id,
-        c.delivery_day,
-        c.hour,
-        SUM(
-            CASE
-                WHEN c.from_zone_id = bz.zone_id
-                THEN c.capacity_value
-                ELSE 0
-            END
-        ) AS export_capacity,
-        SUM(
-            CASE
-                WHEN c.to_zone_id = bz.zone_id
-                THEN c.capacity_value
-                ELSE 0
-            END
-        ) AS import_capacity
-    FROM BiddingZones bz
-    LEFT JOIN capacities c
-        ON bz.zone_id IN (c.from_zone_id, c.to_zone_id)
-    GROUP BY
-        bz.zone_id,
-        c.delivery_day,
-        c.hour
-)
-
 SELECT
-    p.zone_id,
-    bz.zone_code,
     p.delivery_day,
     p.hour,
+
     p.price_value,
+
     v.buy_volume_value,
     v.sell_volume_value,
     (v.buy_volume_value - v.sell_volume_value) AS net_volume,
 
-    COALESCE(ff.incoming_flow, 0) AS incoming_flow,
-    COALESCE(ff.outgoing_flow, 0) AS outgoing_flow,
-    COALESCE(ff.incoming_flow, 0) -
-    COALESCE(ff.outgoing_flow, 0) AS net_flow,
+    bz_other.zone_code AS connected_zone,
 
-    COALESCE(cf.import_capacity, 0) AS import_capacity,
-    COALESCE(cf.export_capacity, 0) AS export_capacity,
+    CASE
+        WHEN f.from_zone_id = p.zone_id
+        THEN 'export'
+        ELSE 'import'
+    END AS flow_direction,
 
-    CAST(strftime('%w', p.delivery_day) AS INTEGER) AS day_of_week,
-    CAST(strftime('%m', p.delivery_day) AS INTEGER) AS month,
-    CAST(strftime('%j', p.delivery_day) AS INTEGER) AS day_of_year
+    f.flow_value,
 
-FROM prices p
+    c.capacity_value,
+
+    CASE
+        WHEN c.capacity_value IS NULL THEN 1
+        ELSE 0
+    END AS capacity_missing,
+
+    CASE
+        WHEN c.capacity_value = 0 THEN 1
+        ELSE 0
+    END AS capacity_zero,
+
+    CASE
+        WHEN c.capacity_value IS NULL
+             OR c.capacity_value = 0
+        THEN NULL
+        ELSE f.flow_value * 1.0 / c.capacity_value
+    END AS flow_utilization
+
+FROM Prices p
+
 JOIN BiddingZones bz
     ON bz.zone_id = p.zone_id
 
-LEFT JOIN volumes v
-    ON p.zone_id = v.zone_id
-   AND p.delivery_day = v.delivery_day
-   AND p.hour = v.hour
+LEFT JOIN Volumes v
+    ON v.zone_id = p.zone_id
+   AND v.delivery_day = p.delivery_day
+   AND v.hour = p.hour
 
-LEFT JOIN flow_features ff
-    ON p.zone_id = ff.zone_id
-   AND p.delivery_day = ff.delivery_day
-   AND p.hour = ff.hour
+LEFT JOIN Flows f
+    ON (
+           f.from_zone_id = p.zone_id
+        OR f.to_zone_id = p.zone_id
+       )
+   AND f.delivery_day = p.delivery_day
+   AND f.hour = p.hour
 
-LEFT JOIN capacity_features cf
-    ON p.zone_id = cf.zone_id
-   AND p.delivery_day = cf.delivery_day
-   AND p.hour = cf.hour
+LEFT JOIN Capacities c
+    ON c.from_zone_id = f.from_zone_id
+   AND c.to_zone_id = f.to_zone_id
+   AND c.delivery_day = f.delivery_day
+   AND c.hour = f.hour
+
+LEFT JOIN BiddingZones bz_other
+    ON bz_other.zone_id =
+       CASE
+           WHEN f.from_zone_id = p.zone_id
+           THEN f.to_zone_id
+           ELSE f.from_zone_id
+       END
 
 WHERE bz.zone_code = 'NO2'
+  AND bz_other.zone_code IN (
+      'DK1',
+      'GER',
+      'NL',
+      'NO1',
+      'NO5'
+  )
 
 ORDER BY
     p.delivery_day,
     p.hour;
 """
 
+neighbor_price_query = """
+SELECT
+    p.delivery_day,
+    p.hour,
+    bz.zone_code,
+    p.price_value
+FROM Prices p
+JOIN BiddingZones bz
+    ON bz.zone_id = p.zone_id
+WHERE bz.zone_code IN (
+    'NO1',
+    'NO5',
+    'DK1',
+    'GER',
+    'NL'
+);
+"""
+
+
 log("Executing SQL query...")
 query_start = time.time()
 
-df = pd.read_sql_query(query, conn)
+flows = pd.read_sql_query(query, conn)
+
+neighbor_prices = pd.read_sql_query(
+    neighbor_price_query,
+    conn
+)
 
 log(f"SQL query completed in {time.time()-query_start:.2f}s")
-log(f"Rows loaded: {len(df):,}")
-log(f"Columns loaded: {len(df.columns)}")
-
-memory_mb = df.memory_usage(deep=True).sum() / 1024**2
-log(f"Memory usage: {memory_mb:.2f} MB")
 
 log("Creating datetime column...")
 step = time.time()
 
-df["datetime"] = (
-    pd.to_datetime(df["delivery_day"])
-    + pd.to_timedelta(df["hour"] - 1, unit="h")
+flows["delivery_day"] = pd.to_datetime(flows["delivery_day"])
+neighbor_prices["delivery_day"] = pd.to_datetime(
+    neighbor_prices["delivery_day"]
 )
 
 log(f"Completed in {time.time()-step:.2f}s")
 
-log("Sorting dataset...")
+log("creating base...")
 step = time.time()
 
-df = df.sort_values(["zone_id", "datetime"])
+base = (
+    flows[
+        [
+            "delivery_day",
+            "hour",
+            "price_value",
+            "buy_volume_value",
+            "sell_volume_value",
+            "net_volume",
+        ]
+    ]
+    .drop_duplicates()
+)
 
-log(f"Completed in {time.time()-step:.2f}s")
+log("Building flow features...")
+step = time.time()
 
-lags = [1, 2, 3, 24, 48, 168] #hours
-
-for lag in lags:
-    log(f"Creating price_lag_{lag}...")
-    step = time.time()
-
-    df[f"price_lag_{lag}"] = (
-        df.groupby("zone_id")["price_value"]
-        .shift(lag)
+flow_features = (
+    flows.pivot_table(
+        index=["delivery_day", "hour"],
+        columns=["connected_zone", "flow_direction"],
+        values="flow_value",
+        aggfunc="first"
     )
+    .fillna(0)
+)
 
-    log(f"price_lag_{lag} completed in {time.time()-step:.2f}s")
 
-log("Creating rolling mean 24h...")
+flow_features.columns = [
+    f"flow_{zone}_{direction}"
+    for zone, direction in flow_features.columns
+]
+
+log(f"Completed in {time.time()-step:.2f}s")
+
+log("Building capacity features...")
 step = time.time()
 
-df["price_ma_24"] = (
-    df.groupby("zone_id")["price_value"]
-      .transform(lambda x: x.rolling(24).mean())
+capacity_features = (
+    flows.pivot_table(
+        index=["delivery_day", "hour"],
+        columns="connected_zone",
+        values="capacity_value",
+        aggfunc="first"
+    )
+)
+
+capacity_features.columns = [
+    f"capacity_{c}"
+    for c in capacity_features.columns
+]
+
+log(f"Completed in {time.time()-step:.2f}s")
+
+log("Building utilization features...")
+step = time.time()
+
+util_features = (
+    flows.pivot_table(
+        index=["delivery_day", "hour"],
+        columns="connected_zone",
+        values="flow_utilization",
+        aggfunc="first"
+    )
+    .fillna(0)
+)
+
+util_features.columns = [
+    f"util_{c}"
+    for c in util_features.columns
+]
+
+log(f"Completed in {time.time()-step:.2f}s")
+
+log("Building capacity missing/zero features...")
+step = time.time()
+
+missing_features = (
+    flows.pivot_table(
+        index=["delivery_day", "hour"],
+        columns="connected_zone",
+        values="capacity_missing",
+        aggfunc="max"
+    )
+    .fillna(1)
+)
+
+missing_features.columns = [
+    f"capacity_missing_{c}"
+    for c in missing_features.columns
+]
+
+zero_features = (
+    flows.pivot_table(
+        index=["delivery_day", "hour"],
+        columns="connected_zone",
+        values="capacity_zero",
+        aggfunc="max"
+    )
+    .fillna(0)
+)
+
+zero_features.columns = [
+    f"capacity_zero_{c}"
+    for c in zero_features.columns
+]
+
+log(f"Completed in {time.time()-step:.2f}s")
+
+log("Building neighbor price features...")
+step = time.time()
+
+neighbor_price_features = (
+    neighbor_prices.pivot_table(
+        index=["delivery_day", "hour"],
+        columns="zone_code",
+        values="price_value",
+        aggfunc="first"
+    )
+)
+
+neighbor_price_features.columns = [
+    f"price_{c}"
+    for c in neighbor_price_features.columns
+]
+
+log(f"Completed in {time.time()-step:.2f}s")
+
+log("Joining features into dataset...")
+step = time.time()
+
+dataset = (
+    base
+    .set_index(["delivery_day", "hour"])
+    .join(flow_features)
+    .join(capacity_features)
+    .join(util_features)
+    .join(missing_features)
+    .join(zero_features)
+    .join(neighbor_price_features)
+    .reset_index()
 )
 
 log(f"Completed in {time.time()-step:.2f}s")
 
-log("Creating rolling mean 168h...")
+log("Building aggregate and calendar features...")
 step = time.time()
 
-df["price_ma_168"] = (
-    df.groupby("zone_id")["price_value"]
-      .transform(lambda x: x.rolling(168).mean())
+export_cols = [
+    c for c in dataset.columns
+    if c.endswith("_export")
+]
+
+import_cols = [
+    c for c in dataset.columns
+    if c.endswith("_import")
+]
+
+dataset["total_exports"] = dataset[export_cols].sum(axis=1)
+
+dataset["total_imports"] = dataset[import_cols].sum(axis=1)
+
+dataset["net_flow"] = (
+    dataset["total_imports"]
+    - dataset["total_exports"]
+)
+
+dataset["day_of_week"] = (
+    dataset["delivery_day"].dt.dayofweek
+)
+
+dataset["hour_sin"] = (
+    np.sin(2 * np.pi * dataset["hour"] / 24)
+)
+
+dataset["hour_cos"] = (
+    np.cos(2 * np.pi * dataset["hour"] / 24)
+)
+
+dataset["month"] = (
+    dataset["delivery_day"].dt.month
+)
+
+dataset["day_of_year"] = (
+    dataset["delivery_day"].dt.dayofyear
 )
 
 log(f"Completed in {time.time()-step:.2f}s")
 
-log("Creating target variable...")
+log("Building lag features...")
 step = time.time()
 
-df["target_price_next_hour"] = (
-    df.groupby("zone_id")["price_value"]
-      .shift(-1)
+dataset = dataset.sort_values(
+    ["delivery_day", "hour"]
 )
 
+dataset["price_lag_24"] = (
+    dataset["price_value"].shift(24)
+)
+
+dataset["price_lag_168"] = (
+    dataset["price_value"].shift(168)
+)
+
+neighbor_price_cols = [
+    c for c in dataset.columns
+    if c.startswith("price_") and "_lag" not in c
+]
+
+for col in neighbor_price_cols:
+    dataset[f"{col}_lag24"] = dataset[col].shift(24)
+
 log(f"Completed in {time.time()-step:.2f}s")
 
-rows_before = len(df)
-
-log("Dropping rows with NaN values...")
+log("Loading Entso-E forecast data...")
 step = time.time()
 
-df = df.dropna()
+ENTSOE_PATH = "Dataset/Entso-E/20260916_dataset.csv"
 
-rows_after = len(df)
+entsoe = pd.read_csv(ENTSOE_PATH)
 
-log(f"Rows before dropna: {rows_before:,}")
-log(f"Rows after dropna : {rows_after:,}")
-log(f"Rows removed      : {rows_before - rows_after:,}")
-log(f"Completed in {time.time()-step:.2f}s")
+entsoe["start_time"] = pd.to_datetime(entsoe["start_time"])
+
+# Floor 15-min timestamps to the hour and average the 4 quarter values
+entsoe["delivery_day"] = entsoe["start_time"].dt.normalize()
+entsoe["hour"] = entsoe["start_time"].dt.hour
+
+entsoe_hourly = (
+    entsoe
+    .groupby(["delivery_day", "hour"])
+    .agg(
+        generation_forecast=("NO2 Day-ahead Generation Forcast (MW)", "mean"),
+        load_forecast=("NO2 Day-ahead total load forcast (MW)", "mean"),
+        wind_forecast=("NO2 Day-ahead forecast Onshore Wind (MW)", "mean"),
+    )
+    .reset_index()
+)
+
+dataset = dataset.merge(
+    entsoe_hourly,
+    on=["delivery_day", "hour"],
+    how="left"
+)
 
 output_file = "ml_dataset.csv"
-
-log(f"Saving dataset to {output_file}...")
-step = time.time()
-
-df.to_csv(output_file, index=False)
+dataset.to_csv(output_file, index=False)
 
 log(f"CSV saved in {time.time()-step:.2f}s")
 
-memory_mb = df.memory_usage(deep=True).sum() / 1024**2
-
 log("FINAL STATS")
-log(f"Final rows: {len(df):,}")
-log(f"Final columns: {len(df.columns)}")
-log(f"Final memory usage: {memory_mb:.2f} MB")
+log(f"Final rows: {len(dataset):,}")
+log(f"Final columns: {len(dataset.columns)}")
 log(f"Total runtime: {time.time()-start_total:.2f}s")
 
 conn.close()
-
 log("Done.")
