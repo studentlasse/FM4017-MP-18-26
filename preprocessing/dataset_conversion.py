@@ -1,3 +1,4 @@
+from calendar import c
 import sqlite3
 import numpy as np
 import pandas as pd
@@ -315,20 +316,28 @@ dataset["day_of_week"] = (
     dataset["delivery_day"].dt.dayofweek
 )
 
-dataset["hour_sin"] = (
-    np.sin(2 * np.pi * dataset["hour"] / 24)
-)
-
-dataset["hour_cos"] = (
-    np.cos(2 * np.pi * dataset["hour"] / 24)
-)
-
 dataset["month"] = (
     dataset["delivery_day"].dt.month
 )
 
 dataset["day_of_year"] = (
     dataset["delivery_day"].dt.dayofyear
+)
+
+dataset["day_sin"] = (
+    np.sin(2 * np.pi * dataset["hour"] / 24)
+)
+
+dataset["day_cos"] = (
+    np.cos(2 * np.pi * dataset["hour"] / 24)
+)
+
+dataset["year_sin"] = (
+    np.sin(2 * np.pi * dataset["day_of_year"] / 365)
+)
+
+dataset["year_cos"] = (
+    np.cos(2 * np.pi * dataset["day_of_year"] / 365)
 )
 
 log(f"Completed in {time.time()-step:.2f}s")
@@ -347,14 +356,17 @@ dataset["price_lag_24"] = (
 dataset["price_lag_168"] = (
     dataset["price_value"].shift(168)
 )
-
 neighbor_price_cols = [
     c for c in dataset.columns
-    if c.startswith("price_") and "_lag" not in c
+    if c.startswith("price_") and "_lag" not in c and "_value" not in c
 ]
+log(f"creating lag for columns: {neighbor_price_cols}")
 
 for col in neighbor_price_cols:
     dataset[f"{col}_lag24"] = dataset[col].shift(24)
+
+for col in neighbor_price_cols:
+    dataset[f"{col}_lag168"] = dataset[col].shift(168)
 
 log(f"Completed in {time.time()-step:.2f}s")
 
