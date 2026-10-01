@@ -55,17 +55,34 @@ SELECT
         ELSE f.flow_value * 1.0 / c.capacity_value
     END AS flow_utilization
 
-FROM Prices p
+FROM (
+    -- Collapse 15-min quarter rows to hourly (no-op for hourly data)
+    SELECT zone_id, delivery_day, hour,
+           AVG(price_value) AS price_value
+    FROM Prices
+    GROUP BY zone_id, delivery_day, hour
+) p
 
 JOIN BiddingZones bz
     ON bz.zone_id = p.zone_id
 
-LEFT JOIN Volumes v
+LEFT JOIN (
+    SELECT zone_id, delivery_day, hour,
+           SUM(buy_volume_value)  AS buy_volume_value,
+           SUM(sell_volume_value) AS sell_volume_value
+    FROM Volumes
+    GROUP BY zone_id, delivery_day, hour
+) v
     ON v.zone_id = p.zone_id
    AND v.delivery_day = p.delivery_day
    AND v.hour = p.hour
 
-LEFT JOIN Flows f
+LEFT JOIN (
+    SELECT from_zone_id, to_zone_id, delivery_day, hour,
+           AVG(flow_value) AS flow_value
+    FROM Flows
+    GROUP BY from_zone_id, to_zone_id, delivery_day, hour
+) f
     ON (
            f.from_zone_id = p.zone_id
         OR f.to_zone_id = p.zone_id
@@ -73,7 +90,12 @@ LEFT JOIN Flows f
    AND f.delivery_day = p.delivery_day
    AND f.hour = p.hour
 
-LEFT JOIN Capacities c
+LEFT JOIN (
+    SELECT from_zone_id, to_zone_id, delivery_day, hour,
+           MAX(capacity_value) AS capacity_value
+    FROM Capacities
+    GROUP BY from_zone_id, to_zone_id, delivery_day, hour
+) c
     ON c.from_zone_id = f.from_zone_id
    AND c.to_zone_id = f.to_zone_id
    AND c.delivery_day = f.delivery_day
@@ -88,13 +110,7 @@ LEFT JOIN BiddingZones bz_other
        END
 
 WHERE bz.zone_code = 'NO2'
-  AND bz_other.zone_code IN (
-      'DK1',
-      'GER',
-      'NL',
-      'NO1',
-      'NO5'
-  )
+  AND bz_other.zone_code IN ('DK1', 'GER', 'NL', 'NO1', 'NO5')
 
 ORDER BY
     p.delivery_day,
@@ -107,16 +123,15 @@ SELECT
     p.hour,
     bz.zone_code,
     p.price_value
-FROM Prices p
+FROM (
+    SELECT zone_id, delivery_day, hour,
+           AVG(price_value) AS price_value
+    FROM Prices
+    GROUP BY zone_id, delivery_day, hour
+) p
 JOIN BiddingZones bz
     ON bz.zone_id = p.zone_id
-WHERE bz.zone_code IN (
-    'NO1',
-    'NO5',
-    'DK1',
-    'GER',
-    'NL'
-);
+WHERE bz.zone_code IN ('NO1', 'NO5', 'DK1', 'GER', 'NL');
 """
 
 
