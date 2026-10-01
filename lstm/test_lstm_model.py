@@ -1,11 +1,11 @@
-
 import pandas as pd
 import numpy as np
 import torch
-from codecarbon import OfflineEmissionsTracker
 
+from codecarbon import OfflineEmissionsTracker
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import TensorDataset, DataLoader
+from sklearn.metrics import r2_score, root_mean_squared_error 
 
 from lstm.lstm_model import LSTMModel
 
@@ -20,32 +20,73 @@ def create_sequences(data, seq_length):
     return np.array(sequences)
 
 def load_dataset(file_path=DATASET_PATH):
-    data = pd.read_csv(file_path, parse_dates=["delivery_day", "datetime"])
+    data = pd.read_csv(
+    file_path,
+    parse_dates=["delivery_day"]
+)
+
+    data = data.sort_values(
+        ["delivery_day", "hour"]
+    ).reset_index(drop=True)
 
     feature_columns = [
-        "price_value",
-        "buy_volume_value",
-        "sell_volume_value",
-        "net_volume",
-        "incoming_flow",
-        "outgoing_flow",
-        "net_flow",
-        "import_capacity",
-        "export_capacity",
-        "day_of_week",
-        "month",
-        "day_of_year",
-        "price_lag_1",
-        "price_lag_2",
-        "price_lag_3",
-        "price_lag_24",
-        "price_lag_48",
-        "price_lag_168",
-        "price_ma_24",
-        "price_ma_168",
+        'delivery_day',
+        'hour', 
+        'price_value', 
+        'buy_volume_value',
+        'sell_volume_value', 
+        'net_volume', 
+        'flow_DK1_export', 
+        'flow_DK1_import',
+       'flow_GER_export', 
+       'flow_GER_import', 
+       'flow_NL_export',
+       'flow_NL_import', 
+       'flow_NO1_export', 
+       'flow_NO1_import',
+       'flow_NO5_export', 
+       'flow_NO5_import', 
+       'capacity_GER', 
+       'capacity_NL',
+       'capacity_NO1', 
+       'capacity_NO5', 
+       'util_GER', 
+       'util_NL', 
+       'util_NO1',
+       'util_NO5', 
+       'capacity_missing_DK1', 
+       'capacity_missing_GER',
+       'capacity_missing_NL', 
+       'capacity_missing_NO1', 
+       'capacity_missing_NO5',
+       'capacity_zero_DK1', 
+       'capacity_zero_GER', 
+       'capacity_zero_NL',
+       'capacity_zero_NO1', 
+       'capacity_zero_NO5', 
+       'price_DK1', 
+       'price_NO1',
+       'price_NO5', 
+       'total_exports',
+       'total_imports', 
+       'net_flow',
+       'day_of_week',
+       'day_sin', 
+       'day_cos', 
+       'year_sin', 
+       'year_cos', 
+       'month', 
+       'day_of_year',
+       'price_lag_24', 
+       'price_lag_168', 
+       'price_DK1_lag24',
+       'price_NO1_lag24', 
+       'price_NO5_lag24', 
     ]
 
-    return data.sort_values("datetime").reset_index(drop=True), feature_columns
+    data["delivery_day"] = pd.to_datetime(data["delivery_day"])
+
+    return data.sort_values("delivery_day").reset_index(drop=True), feature_columns
 
 def measure_energy(operation, *args, **kwargs):
     tracker = OfflineEmissionsTracker(
@@ -71,19 +112,24 @@ def train_model(
     target_scaler,
     checkpoint_metadata,
     num_epochs,
+    patience,
     learning_rate,
     model_path="best_lstm_model.pt",
 ):
     criterion = torch.nn.MSELoss()  # Mean Squared Error loss
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)  # Adam optimizer
     best_validation_rmse = float("inf")
+    epochs_without_improvement = 0
 
     dataset = TensorDataset(data, targets)
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=32, shuffle=False)
 
     for epoch in range(num_epochs):
         model.train()  
         for batch_data, batch_targets in dataloader:
+            device = next(model.parameters()).device
+            batch_data = batch_data.to(device)
+            batch_targets = batch_targets.to(device)
             optimizer.zero_grad() 
             predictions, _ = model(batch_data)  # Forward pass
             loss = criterion(predictions, batch_targets)
@@ -97,8 +143,9 @@ def train_model(
             target_scaler,
         )
 
-        if validation_rmse < best_validation_rmse:
+        if validation_rmse < best_validation_rmse - 0.001:
             best_validation_rmse = validation_rmse
+            epochs_without_improvement = 0
             torch.save(
                 {
                     "model_state_dict": model.state_dict(),
@@ -111,6 +158,10 @@ def train_model(
             checkpoint_status = " - saved"
         else:
             checkpoint_status = ""
+            epochs_without_improvement += 1
+            if epochs_without_improvement >= patience:
+                print(f"Early stopping at epoch {epoch + 1} due to no improvement in validation RMSE.")
+                break
 
         print(
             f"Epoch [{epoch + 1}/{num_epochs}], "
@@ -121,6 +172,8 @@ def train_model(
 
 def predict(model, data):
     model.eval()  
+    device = next(model.parameters()).device
+    data = data.to(device)
     with torch.no_grad():
         predictions, _ = model(data)
     return predictions
@@ -136,16 +189,87 @@ def evaluate_model(model, data, targets, target_scaler):
     predictions = target_scaler.inverse_transform(predictions)
     targets = target_scaler.inverse_transform(targets)
 
-    mse = np.mean((predictions - targets) ** 2)
-    rmse = np.sqrt(mse)
+    r2 = r2_score(targets, predictions)
+    rmse = root_mean_squared_error(targets, predictions)
 
-    return mse, rmse
+    return r2, rmse
+
+def lstm_feature_importance(
+    model,
+    data,
+    targets,
+    target_scaler,
+    feature_columns,
+    repeats=5,
+    ):
+    model.eval()
+    _, baseline_rmse = evaluate_model(model, data, targets, target_scaler)
+
+    importance_rows = []
+
+    for feature_index, feature_name in enumerate(feature_columns):
+        rmse_scores = []
+
+        for _ in range(repeats):
+            permutation = torch.randperm(data.size(0))
+
+            permuted_data = data.clone()
+
+            permuted_data[:, :, feature_index] = (
+                data[permutation, :, feature_index]
+            )
+
+            _, permuted_rmse = evaluate_model(
+                model,
+                permuted_data,
+                targets,
+                target_scaler,
+            )
+
+            rmse_scores.append(permuted_rmse)
+
+        feature_importance = np.mean(rmse_scores) - baseline_rmse
+        
+        importance_rows.append(
+            {
+                "feature": feature_name,
+                "importance": feature_importance,
+            }
+        )
+    
+    return pd.DataFrame(importance_rows).sort_values(
+        "importance",
+        ascending=False,
+    )
+
 
 if __name__ == "__main__":
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
     data, feature_columns = load_dataset()
 
+    # uncomment the following lines to filter the dataset to only include data before 2020-01-01
+    # data = data[
+    # data["delivery_day"] < pd.Timestamp("2020-01-01")
+    # ].copy()
+
+    data["target_price_next_day"] = data["price_value"].shift(-24)
+
+    feature_columns = [
+        column for column in feature_columns
+        if column != "delivery_day"
+    ]
+
+    required_columns = feature_columns + ["target_price_next_day"]
+
+    data = data.dropna(
+    subset=required_columns
+    ).reset_index(drop=True)
+
     feature_data = data[feature_columns].to_numpy(dtype=np.float32)
-    target_data = data["target_price_next_hour"].to_numpy(dtype=np.float32)
+    target_data = data["target_price_next_day"].to_numpy(dtype=np.float32)
 
     split_index = int(len(feature_data) * 0.7)
     validation_index = int(len(feature_data) * 0.85)
@@ -197,7 +321,7 @@ if __name__ == "__main__":
     )
     validation_targets = sequence_targets[split_index - seq_length + 1:validation_index - seq_length + 1]
 
-    prediction_data = torch.tensor(
+    test_data = torch.tensor(
         data_sequences[validation_index - seq_length + 1:],
         dtype=torch.float32
     )
@@ -207,15 +331,15 @@ if __name__ == "__main__":
         hidden_size=50,  
         num_layers=2,  
         output_size=1  
-    )
+    ).to(device)
 
     model_path = "best_lstm_model.pt"
     checkpoint_metadata = {
         "feature_columns": feature_columns,
         "sequence_length": seq_length,
-        "target_column": "target_price_next_hour",
+        "target_column": "target_price_next_day",
         "input_size": train_data.shape[2],
-        "hidden_size": 50,
+        "hidden_size": 64,
         "num_layers": 2,
         "output_size": 1,
         "feature_mean": feature_scaler.mean_.tolist(),
@@ -234,18 +358,19 @@ if __name__ == "__main__":
         target_scaler,
         checkpoint_metadata,
         num_epochs=30,
+        patience=10,
         learning_rate=0.001,
         model_path=model_path,
     )
 
-    checkpoint = torch.load(model_path, weights_only=False)
+    checkpoint = torch.load(model_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state_dict"])
     print(
         f"Loaded best checkpoint from epoch {checkpoint['best_epoch']} "
         f"(validation RMSE: {checkpoint['best_validation_rmse']:.4f})"
     )
 
-    validation_mse, validation_energy_kwh = measure_energy(
+    validation_score, validation_energy_kwh = measure_energy(
         evaluate_model,
         model,
         validation_data,
@@ -253,18 +378,18 @@ if __name__ == "__main__":
         target_scaler,
     )
 
-    test_mse, test_energy_kwh = measure_energy(
+    test_metrics, test_energy_kwh = measure_energy(
         evaluate_model,
         model,
-        prediction_data,
+        test_data,
         sequence_targets[validation_index - seq_length + 1:],
         target_scaler,
     )
 
-    print(f"Validation MSE: {validation_mse[0]:.4f}")
-    print(f"Validation RMSE: {validation_mse[1]:.4f}")
-    print(f"Test MSE: {test_mse[0]:.4f}")
-    print(f"Test RMSE: {test_mse[1]:.4f}")
+    print(f"Validation R²: {validation_score[0]:.4f}")
+    print(f"Validation RMSE: {validation_score[1]:.4f}")
+    print(f"Test R²: {test_metrics[0]:.4f}")
+    print(f"Test RMSE: {test_metrics[1]:.4f}")
     print(f"Training energy consumption: {training_energy_kwh:.9f} kWh")
     print(f"Validation energy consumption: {validation_energy_kwh:.9f} kWh")
     print(f"Test prediction energy consumption: {test_energy_kwh:.9f} kWh")
