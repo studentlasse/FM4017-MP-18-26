@@ -1,20 +1,43 @@
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
 
 import pandas as pd
 import numpy as np
 from codecarbon import OfflineEmissionsTracker
-
 from xgboost import XGBRegressor
+from sklearn.metrics import r2_score, root_mean_squared_error 
+from logger.csv_logger import write_to_csv
+from feature_sets import FEATURE_SETS
 
-DATASET_PATH = "ml_dataset.csv" # from preprocessing/dataset_conversion.py
-
+DATASET_PATH = PROJECT_ROOT / "ml_dataset.csv"
+RESULTS_CSV_PATH = PROJECT_ROOT / "xgboost_results.csv"
 
 def load_dataset(file_path=DATASET_PATH):
     data = pd.read_csv(file_path)
 
     data["delivery_day"] = pd.to_datetime(data["delivery_day"])
+
+    # Define a date filter:
+    #filter_end_date = pd.Timestamp("2020-01-01")
+    # Use the entire timeline:
+    filter_end_date = None
+
+    if filter_end_date is not None:
+        data = data[data["delivery_day"] < filter_end_date].copy()
+
+        data_filter = f"delivery_day < {filter_end_date.date()}"
+
+    else:
+        data_filter = "entire timeline"
+
     data = data.sort_values(["delivery_day", "hour"]).reset_index(drop=True)
 
-    data["target_price_next_day"] = data["price_value"].shift(-24)
+    forecast_horizon = 24
+
+    data["target_price_next_day"] = data["price_value"].shift(-forecast_horizon)
 
     data = data.dropna(subset=["target_price_next_day"])       
 
@@ -24,67 +47,11 @@ def load_dataset(file_path=DATASET_PATH):
 
     data = data.drop(columns=drop_cols)
 
-    feature_columns = [
-        'hour', 
-        'price_value', 
-        'buy_volume_value',
-        'sell_volume_value', 
-        'net_volume', 
-        'flow_DK1_export', 
-        'flow_DK1_import',
-        'flow_GER_export', 
-        'flow_GER_import', 
-        'flow_NL_export',
-        'flow_NL_import', 
-        'flow_NO1_export', 
-        'flow_NO1_import',
-        'flow_NO5_export', 
-        'flow_NO5_import', 
-        'capacity_GER', 
-        'capacity_NL',
-        'capacity_NO1', 
-        'capacity_NO5', 
-        'util_GER', 
-        'util_NL', 
-        'util_NO1',
-        'util_NO5', 
-        'capacity_missing_DK1', 
-        'capacity_missing_GER',
-        'capacity_missing_NL', 
-        'capacity_missing_NO1', 
-        'capacity_missing_NO5',
-        'capacity_zero_DK1', 
-        'capacity_zero_GER', 
-        'capacity_zero_NL',
-        'capacity_zero_NO1', 
-        'capacity_zero_NO5', 
-        'price_DK1', 
-        'price_NO1',
-        'price_NO5', 
-        'total_exports', 
-        'total_imports', 
-        'net_flow',
-        'day_of_week', 
-        'month', 
-        'day_of_year', 
-        'day_sin', 
-        'day_cos', 
-        'year_sin',
-        'year_cos', 
-        'price_lag_24', 
-        'price_lag_168', 
-        'price_DK1_lag24',
-        'price_NO1_lag24', 
-        'price_NO5_lag24', 
-        'price_DK1_lag168',
-        'price_NO1_lag168', 
-        'price_NO5_lag168', 
-        'generation_forecast',
-        'load_forecast', 
-        'wind_forecast', 
-    ]
+    FEATURE_SET_NAME = "full_set"
 
-    return data, feature_columns
+    feature_columns = FEATURE_SETS[FEATURE_SET_NAME]
+
+    return data, feature_columns, data_filter, forecast_horizon, FEATURE_SET_NAME
 
 def measure_energy(operation, *args, **kwargs):
     tracker = OfflineEmissionsTracker(
@@ -119,15 +86,15 @@ def evaluate_model(model, data, targets):
 
     mse = np.mean((predictions - targets) ** 2)
     rmse = np.sqrt(mse)
+    r2 = r2_score(targets, predictions)
 
-    return mse, rmse
+    return mse, rmse, r2
 
 if __name__ == "__main__":
-    data, feature_columns = load_dataset()
+    data, feature_columns, data_filter, forecast_horizon, feature_set_name = load_dataset()
 
     feature_data = data[feature_columns]
     target_data = data['target_price_next_day']
-
     train_end = int(len(feature_data) * 0.7)
     val_end = int(len(feature_data) * 0.85)
 
@@ -160,24 +127,49 @@ if __name__ == "__main__":
         validation_targets,
     )
 
-    validation_mse, validation_energy_kwh = measure_energy(
+    validation_score, validation_energy_kwh = measure_energy(
         evaluate_model,
         model,
         validation_data,
         validation_targets,
     )
 
-    test_mse, test_energy_kwh = measure_energy(
+    test_metrics, test_energy_kwh = measure_energy(
         evaluate_model,
         model,
         test_data,
         test_targets
     )
 
-    print(f"Validation MSE: {validation_mse[0]:.4f}")
-    print(f"Validation RMSE: {validation_mse[1]:.4f}")
-    print(f"Test MSE: {test_mse[0]:.4f}")
-    print(f"Test RMSE: {test_mse[1]:.4f}")
+    importance = pd.DataFrame(
+        {
+            "feature": feature_data.columns,
+            "importance": model.feature_importances_,
+        }
+    ).sort_values("importance", ascending=False)
+    print(importance.head(20))
+
+    print(f"Validation R²: {validation_score[2]:.4f}")
+    print(f"Validation RMSE: {validation_score[1]:.4f}")
+    print(f"Test R²: {test_metrics[2]:.4f}")
+    print(f"Test RMSE: {test_metrics[1]:.4f}")
     print(f"Training energy consumption: {training_energy_kwh:.9f} kWh")
     print(f"Validation energy consumption: {validation_energy_kwh:.9f} kWh")
     print(f"Test prediction energy consumption: {test_energy_kwh:.9f} kWh")
+
+    results_df = pd.DataFrame({
+        "data_filter": data_filter,
+        "forecast_horizon": [forecast_horizon],
+        "feature_count": [len(feature_columns)],
+        "feature_columns": [feature_set_name],
+        "validation_r2": [validation_score[0]],
+        "validation_rmse": [validation_score[1]],
+        "test_r2": [test_metrics[0]],
+        "test_rmse": [test_metrics[1]],
+        "training_energy_kwh": [training_energy_kwh],
+        "validation_energy_kwh": [validation_energy_kwh],
+        "test_energy_kwh": [test_energy_kwh],
+        "description": None,
+    })
+
+    write_to_csv(results_df, RESULTS_CSV_PATH)
