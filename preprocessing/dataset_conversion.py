@@ -388,25 +388,26 @@ log(f"Completed in {time.time()-step:.2f}s")
 log("Loading Entso-E forecast data...")
 step = time.time()
 
-ENTSOE_PATH = "Dataset/Entso-E/20260916_dataset.csv"
+ENTSOE_PATH = "Dataset/Entso-E/entsoe_data_hourly.csv"
 
-entsoe = pd.read_csv(ENTSOE_PATH)
+# First column is an unnamed index holding the UTC timestamps
+entsoe = pd.read_csv(ENTSOE_PATH, index_col=0)
 
-entsoe["start_time"] = pd.to_datetime(entsoe["start_time"])
+entsoe.index = pd.to_datetime(entsoe.index, utc=True)
 
-# Floor 15-min timestamps to the hour and average the 4 quarter values
-entsoe["delivery_day"] = entsoe["start_time"].dt.normalize()
-entsoe["hour"] = entsoe["start_time"].dt.hour
+# Nordpool data is in local Oslo time (delivery_day + hour),
+# so convert the UTC timestamps before deriving the merge keys
+entsoe.index = entsoe.index.tz_convert("Europe/Oslo")
 
+entsoe["delivery_day"] = entsoe.index.tz_localize(None).normalize()
+entsoe["hour"] = entsoe.index.hour
+
+# DST fall-back days have a duplicated local hour (2A/2B);
+# average them so the merge stays 1:1, mirroring the DB's quarter collapse
 entsoe_hourly = (
     entsoe
-    .groupby(["delivery_day", "hour"])
-    .agg(
-        generation_forecast=("NO2 Day-ahead Generation Forcast (MW)", "mean"),
-        load_forecast=("NO2 Day-ahead total load forcast (MW)", "mean"),
-        wind_forecast=("NO2 Day-ahead forecast Onshore Wind (MW)", "mean"),
-    )
-    .reset_index()
+    .groupby(["delivery_day", "hour"], as_index=False)
+    .mean(numeric_only=True)
 )
 
 dataset = dataset.merge(
@@ -414,6 +415,11 @@ dataset = dataset.merge(
     on=["delivery_day", "hour"],
     how="left"
 )
+
+ENTSOE_START = pd.Timestamp("2025-10-01")
+before = len(dataset)
+dataset = dataset[dataset["delivery_day"] >= ENTSOE_START].copy()
+log(f"Dropped {before - len(dataset):,} rows before {ENTSOE_START.date()}")
 
 output_file = "ml_dataset.csv"
 dataset.to_csv(output_file, index=False)
