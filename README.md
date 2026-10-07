@@ -11,6 +11,8 @@ The project focuses on evaluating the trade-off between predictive quality and e
 - `Dataset/` – datasets used for experiments and evaluation.
 - `preprocessing/` – scripts for transforming raw data into a usable formats for model training. This folder also includes an example workflow for training a Random Forest Regressor (RFR) model.
 - `lstm/` – implementation for training and evaluating an LSTM model.
+- `xgboost/` – implementation for training and evaluating an XGBoost model.
+- `presentation/` – Presentation material as plots in jupyter notebook.
 
 ## Workflow
 
