@@ -39,16 +39,6 @@ SELECT
     c.capacity_value,
 
     CASE
-        WHEN c.capacity_value IS NULL THEN 1
-        ELSE 0
-    END AS capacity_missing,
-
-    CASE
-        WHEN c.capacity_value = 0 THEN 1
-        ELSE 0
-    END AS capacity_zero,
-
-    CASE
         WHEN c.capacity_value IS NULL
              OR c.capacity_value = 0
         THEN NULL
@@ -68,8 +58,8 @@ JOIN BiddingZones bz
 
 LEFT JOIN (
     SELECT zone_id, delivery_day, hour,
-           SUM(buy_volume_value)  AS buy_volume_value,
-           SUM(sell_volume_value) AS sell_volume_value
+           AVG(buy_volume_value)  AS buy_volume_value,
+           AVG(sell_volume_value) AS sell_volume_value
     FROM Volumes
     GROUP BY zone_id, delivery_day, hour
 ) v
@@ -157,6 +147,33 @@ neighbor_prices["delivery_day"] = pd.to_datetime(
 
 log(f"Completed in {time.time()-step:.2f}s")
 
+log("Loading Entso-E forecast data...")
+step = time.time()
+
+ENTSOE_PATH = "Dataset/Entso-E/entsoe_data_hourly.csv"
+
+# First column is an unnamed index holding the UTC timestamps
+entsoe = pd.read_csv(ENTSOE_PATH, index_col=0)
+
+entsoe.index = pd.to_datetime(entsoe.index, utc=True)
+
+# Nordpool data is in local Oslo time (delivery_day + hour),
+# so convert the UTC timestamps before deriving the merge keys
+entsoe.index = entsoe.index.tz_convert("Europe/Oslo")
+
+entsoe["delivery_day"] = entsoe.index.tz_localize(None).normalize()
+entsoe["hour"] = entsoe.index.hour
+
+# DST fall-back days have a duplicated local hour (2A/2B);
+# average them so the merge stays 1:1, mirroring the DB's quarter collapse
+entsoe_hourly = (
+    entsoe
+    .groupby(["delivery_day", "hour"], as_index=False)
+    .mean(numeric_only=True)
+)
+
+log(f"Completed in {time.time()-step:.2f}s")
+
 log("creating base...")
 step = time.time()
 
@@ -234,41 +251,6 @@ util_features.columns = [
 
 log(f"Completed in {time.time()-step:.2f}s")
 
-log("Building capacity missing/zero features...")
-step = time.time()
-
-missing_features = (
-    flows.pivot_table(
-        index=["delivery_day", "hour"],
-        columns="connected_zone",
-        values="capacity_missing",
-        aggfunc="max"
-    )
-    .fillna(1)
-)
-
-missing_features.columns = [
-    f"capacity_missing_{c}"
-    for c in missing_features.columns
-]
-
-zero_features = (
-    flows.pivot_table(
-        index=["delivery_day", "hour"],
-        columns="connected_zone",
-        values="capacity_zero",
-        aggfunc="max"
-    )
-    .fillna(0)
-)
-
-zero_features.columns = [
-    f"capacity_zero_{c}"
-    for c in zero_features.columns
-]
-
-log(f"Completed in {time.time()-step:.2f}s")
-
 log("Building neighbor price features...")
 step = time.time()
 
@@ -297,10 +279,16 @@ dataset = (
     .join(flow_features)
     .join(capacity_features)
     .join(util_features)
-    .join(missing_features)
-    .join(zero_features)
     .join(neighbor_price_features)
     .reset_index()
+)
+
+# merged here, before the feature engineering below, so the Entso-E prices
+# get lags like the Nordpool ones
+dataset = dataset.merge(
+    entsoe_hourly,
+    on=["delivery_day", "hour"],
+    how="left"
 )
 
 log(f"Completed in {time.time()-step:.2f}s")
@@ -368,55 +356,41 @@ dataset["price_lag_24"] = (
     dataset["price_value"].shift(24)
 )
 
+dataset["price_lag_48"] = (
+    dataset["price_value"].shift(48)
+)
+
+dataset["price_lag_72"] = (
+    dataset["price_value"].shift(72)
+)
+
 dataset["price_lag_168"] = (
     dataset["price_value"].shift(168)
 )
-neighbor_price_cols = [
-    c for c in dataset.columns
-    if c.startswith("price_") and "_lag" not in c and "_value" not in c
-]
-log(f"creating lag for columns: {neighbor_price_cols}")
 
-for col in neighbor_price_cols:
+price_cols = [
+    c for c in dataset.columns
+    if (c.startswith("price_") and "_lag" not in c and "_value" not in c) or ("forecast" in c)
+]
+log(f"creating lag for columns: {price_cols}")
+
+for col in price_cols:
     dataset[f"{col}_lag24"] = dataset[col].shift(24)
 
-for col in neighbor_price_cols:
+for col in price_cols:
+    dataset[f"{col}_lag48"] = dataset[col].shift(48)
+
+for col in price_cols:
+    dataset[f"{col}_lag72"] = dataset[col].shift(72)
+
+for col in price_cols:
     dataset[f"{col}_lag168"] = dataset[col].shift(168)
 
 log(f"Completed in {time.time()-step:.2f}s")
 
-log("Loading Entso-E forecast data...")
 step = time.time()
 
-ENTSOE_PATH = "Dataset/Entso-E/entsoe_data_hourly.csv"
-
-# First column is an unnamed index holding the UTC timestamps
-entsoe = pd.read_csv(ENTSOE_PATH, index_col=0)
-
-entsoe.index = pd.to_datetime(entsoe.index, utc=True)
-
-# Nordpool data is in local Oslo time (delivery_day + hour),
-# so convert the UTC timestamps before deriving the merge keys
-entsoe.index = entsoe.index.tz_convert("Europe/Oslo")
-
-entsoe["delivery_day"] = entsoe.index.tz_localize(None).normalize()
-entsoe["hour"] = entsoe.index.hour
-
-# DST fall-back days have a duplicated local hour (2A/2B);
-# average them so the merge stays 1:1, mirroring the DB's quarter collapse
-entsoe_hourly = (
-    entsoe
-    .groupby(["delivery_day", "hour"], as_index=False)
-    .mean(numeric_only=True)
-)
-
-dataset = dataset.merge(
-    entsoe_hourly,
-    on=["delivery_day", "hour"],
-    how="left"
-)
-
-ENTSOE_START = pd.Timestamp("2025-10-01")
+ENTSOE_START = pd.Timestamp("2024-10-01")
 before = len(dataset)
 dataset = dataset[dataset["delivery_day"] >= ENTSOE_START].copy()
 log(f"Dropped {before - len(dataset):,} rows before {ENTSOE_START.date()}")
