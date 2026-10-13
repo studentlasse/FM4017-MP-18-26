@@ -27,18 +27,6 @@ FEATURE_SETS = {
     "util_NO1",
     "util_NO5",
 
-    "capacity_missing_DK1",
-    "capacity_missing_GER",
-    "capacity_missing_NL",
-    "capacity_missing_NO1",
-    "capacity_missing_NO5",
-
-    "capacity_zero_DK1",
-    "capacity_zero_GER",
-    "capacity_zero_NL",
-    "capacity_zero_NO1",
-    "capacity_zero_NO5",
-
     "price_DK1",
     "price_NO1",
     "price_NO5",
@@ -72,17 +60,6 @@ FEATURE_SETS = {
     "price_DK1_lag168",
     "price_NO1_lag168",
     "price_NO5_lag168",
-
-    "Solar",
-    "Wind Onshore",
-    "Wind Offshore",
-
-    "Forecasted Generation",
-    "Forecasted Load",
-
-    "no2_reservoir_level_MWh",
-    "no1_reservoir_level_MWh",
-    "no5_reservoir_level_MWh",
 ],
 
     "lstm_set": [
@@ -103,18 +80,6 @@ FEATURE_SETS = {
     "flow_NO5_export",
     "flow_NO5_import",
 
-    "capacity_missing_DK1",
-    "capacity_missing_GER",
-    "capacity_missing_NL",
-    "capacity_missing_NO1",
-    "capacity_missing_NO5",
-
-    "capacity_zero_DK1",
-    "capacity_zero_GER",
-    "capacity_zero_NL",
-    "capacity_zero_NO1",
-    "capacity_zero_NO5",
-
     "price_DK1",
     "price_NO1",
     "price_NO5",
@@ -155,10 +120,6 @@ FEATURE_SETS = {
 
     "Forecasted Generation",
     "Forecasted Load",
-
-    "no2_reservoir_level_MWh",
-    "no1_reservoir_level_MWh",
-    "no5_reservoir_level_MWh",
 ],
 
     "minimal_set": [
@@ -191,16 +152,16 @@ FEATURE_SETS = {
         "day_cos",
     ],
 
-    "reservoir": [
-        "price_value",
-        "price_lag_24",
-        "price_lag_168",
-        "no2_reservoir_level_MWh",
-        "no1_reservoir_level_MWh",
-        "no5_reservoir_level_MWh",
-        "day_sin",
-        "day_cos",
-    ],
+    # "reservoir": [
+    #     "price_value",
+    #     "price_lag_24",
+    #     "price_lag_168",
+    #     "no2_reservoir_level_MWh",
+    #     "no1_reservoir_level_MWh",
+    #     "no5_reservoir_level_MWh",
+    #     "day_sin",
+    #     "day_cos",
+    # ],
 
     "renewables": [
         "price_value",
