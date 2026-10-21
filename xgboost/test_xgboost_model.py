@@ -1,22 +1,66 @@
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
 
 import pandas as pd
 import numpy as np
 from codecarbon import OfflineEmissionsTracker
-
 from xgboost import XGBRegressor
+from sklearn.metrics import r2_score, root_mean_squared_error, mean_absolute_error
+from logger.csv_logger import write_to_csv
+from feature_sets import FEATURE_SETS
+from plotter.result_plotter import plot_results
 
-DATASET_PATH = "ml_dataset.csv" # from preprocessing/dataset_conversion.py
 
+DATASET_PATH = PROJECT_ROOT / "ml_dataset.csv"
+RESULTS_CSV_PATH = PROJECT_ROOT / "xgboost_results.csv"
 
 def load_dataset(file_path=DATASET_PATH):
     data = pd.read_csv(file_path)
 
     data["delivery_day"] = pd.to_datetime(data["delivery_day"])
+
+    # Convert hourly observations to one row per day with the average price for that day
+    data = (
+        data.groupby("delivery_day", as_index=False)
+        .mean(numeric_only=True)
+        .sort_values("delivery_day")
+        .reset_index(drop=True)
+    )
+
+    seasonal_splits = [
+        (
+            "Entire timeline (train: Oct 2024-May 2026, test: Jun 2026-Sep 2026)",
+            data["delivery_day"].between("2026-06-01", "2026-09-30"),  # test
+            data["delivery_day"].between("2024-10-01", "2026-05-31"),  # train
+        ),
+        
+        (
+            "Summer 2025 (train: Apr-Jun 2025, test: Jul-Sep 2025)",
+            data["delivery_day"].between("2025-07-01", "2025-09-30"),  # test
+            data["delivery_day"].between("2025-04-01", "2025-06-30"),  # train
+        ),
+        (
+            "Winter 2025 (train: Oct-Dec 2025, test: Jan-Mar 2026)",
+            data["delivery_day"].between("2026-01-01", "2026-03-31"),  # test
+            data["delivery_day"].between("2025-10-01", "2025-12-31"),  # train
+        ),
+        ]
+        
+    
+    data_filter, test_mask, train_mask = seasonal_splits[1]
+
     data = data.sort_values(["delivery_day", "hour"]).reset_index(drop=True)
 
-    data["target_price_next_day"] = data["price_value"].shift(-24)
+    forecast_horizon = 1
 
-    data = data.dropna(subset=["target_price_next_day"])       
+    data["target_price_next_day"] = data["price_value"].shift(-forecast_horizon)
+
+    data = data.dropna(subset=["target_price_next_day"])    
+
+    delivery_days = data["delivery_day"].copy()
 
     drop_cols = [
         "delivery_day",
@@ -24,67 +68,11 @@ def load_dataset(file_path=DATASET_PATH):
 
     data = data.drop(columns=drop_cols)
 
-    feature_columns = [
-        'hour', 
-        'price_value', 
-        'buy_volume_value',
-        'sell_volume_value', 
-        'net_volume', 
-        'flow_DK1_export', 
-        'flow_DK1_import',
-        'flow_GER_export', 
-        'flow_GER_import', 
-        'flow_NL_export',
-        'flow_NL_import', 
-        'flow_NO1_export', 
-        'flow_NO1_import',
-        'flow_NO5_export', 
-        'flow_NO5_import', 
-        'capacity_GER', 
-        'capacity_NL',
-        'capacity_NO1', 
-        'capacity_NO5', 
-        'util_GER', 
-        'util_NL', 
-        'util_NO1',
-        'util_NO5', 
-        'capacity_missing_DK1', 
-        'capacity_missing_GER',
-        'capacity_missing_NL', 
-        'capacity_missing_NO1', 
-        'capacity_missing_NO5',
-        'capacity_zero_DK1', 
-        'capacity_zero_GER', 
-        'capacity_zero_NL',
-        'capacity_zero_NO1', 
-        'capacity_zero_NO5', 
-        'price_DK1', 
-        'price_NO1',
-        'price_NO5', 
-        'total_exports', 
-        'total_imports', 
-        'net_flow',
-        'day_of_week', 
-        'month', 
-        'day_of_year', 
-        'day_sin', 
-        'day_cos', 
-        'year_sin',
-        'year_cos', 
-        'price_lag_24', 
-        'price_lag_168', 
-        'price_DK1_lag24',
-        'price_NO1_lag24', 
-        'price_NO5_lag24', 
-        'price_DK1_lag168',
-        'price_NO1_lag168', 
-        'price_NO5_lag168', 
-        'generation_forecast',
-        'load_forecast', 
-        'wind_forecast', 
-    ]
+    FEATURE_SET_NAME = "full_set"
 
-    return data, feature_columns
+    feature_columns = FEATURE_SETS[FEATURE_SET_NAME]
+
+    return data, feature_columns, train_mask, test_mask, data_filter, forecast_horizon, FEATURE_SET_NAME, delivery_days
 
 def measure_energy(operation, *args, **kwargs):
     tracker = OfflineEmissionsTracker(
@@ -117,38 +105,46 @@ def evaluate_model(model, data, targets):
 
     predictions = model.predict(data)
 
-    mse = np.mean((predictions - targets) ** 2)
-    rmse = np.sqrt(mse)
+    
+    rmse = root_mean_squared_error(targets, predictions)
+    r2 = r2_score(targets, predictions)
+    mae = mean_absolute_error(targets, predictions)
 
-    return mse, rmse
+    return rmse, r2, mae
 
 if __name__ == "__main__":
-    data, feature_columns = load_dataset()
+    data, feature_columns, train_mask, test_mask, data_filter, forecast_horizon, feature_set_name, delivery_days = load_dataset()
 
     feature_data = data[feature_columns]
     target_data = data['target_price_next_day']
 
-    train_end = int(len(feature_data) * 0.7)
-    val_end = int(len(feature_data) * 0.85)
 
-    train_data = feature_data.iloc[:train_end]
-    train_targets = target_data.iloc[:train_end]
+    train_data_all = feature_data.loc[train_mask]
+    train_targets_all = target_data.loc[train_mask]
 
-    validation_data = feature_data.iloc[train_end:val_end]
-    validation_targets = target_data.iloc[train_end:val_end]
+    test_data = feature_data.loc[test_mask]
+    test_targets = target_data.loc[test_mask]
+    test_delivery_days = delivery_days.iloc[test_mask]
 
-    test_data = feature_data.iloc[val_end:]
-    test_targets = target_data.iloc[val_end:]
+    validation_end = int(len(train_data_all) * 0.85)
+
+    train_data = train_data_all.iloc[:validation_end]
+    train_targets = train_targets_all.iloc[:validation_end]
+
+    validation_data = train_data_all.iloc[validation_end:]
+    validation_targets = train_targets_all.iloc[validation_end:]
 
 
     model = XGBRegressor(
-        n_estimators=300,
+        n_estimators=1000,
         max_depth=2,
         learning_rate=0.03,
-        subsample=0.8,
-        colsample_bytree=0.6,
+        min_child_weight=1,
+        subsample=1,
+        colsample_bytree=1,
         random_state=42,
         n_jobs=-1,
+        early_stopping_rounds=200,
     )
 
     _, training_energy_kwh = measure_energy(
@@ -160,24 +156,68 @@ if __name__ == "__main__":
         validation_targets,
     )
 
-    validation_mse, validation_energy_kwh = measure_energy(
+    validation_score, validation_energy_kwh = measure_energy(
         evaluate_model,
         model,
         validation_data,
         validation_targets,
     )
 
-    test_mse, test_energy_kwh = measure_energy(
+    test_metrics, test_energy_kwh = measure_energy(
         evaluate_model,
         model,
         test_data,
         test_targets
     )
 
-    print(f"Validation MSE: {validation_mse[0]:.4f}")
-    print(f"Validation RMSE: {validation_mse[1]:.4f}")
-    print(f"Test MSE: {test_mse[0]:.4f}")
-    print(f"Test RMSE: {test_mse[1]:.4f}")
+    importance = pd.DataFrame(
+        {
+            "feature": feature_data.columns,
+            "importance": model.feature_importances_,
+        }
+    ).sort_values("importance", ascending=False)
+    print(importance.head(20))
+
+    print(f"Validation R²: {validation_score[1]:.4f}")
+    print(f"Validation RMSE: {validation_score[0]:.4f}")
+    print(f"Validation MAE: {validation_score[2]:.4f}")
+    print(f"Test R²: {test_metrics[1]:.4f}")
+    print(f"Test RMSE: {test_metrics[0]:.4f}")
+    print(f"Test MAE: {test_metrics[2]:.4f}")
     print(f"Training energy consumption: {training_energy_kwh:.9f} kWh")
     print(f"Validation energy consumption: {validation_energy_kwh:.9f} kWh")
     print(f"Test prediction energy consumption: {test_energy_kwh:.9f} kWh")
+
+    results_df = pd.DataFrame({
+        "data_filter": data_filter,
+        "forecast_horizon": [forecast_horizon],
+        "feature_count": [len(feature_columns)],
+        "feature_columns": [feature_set_name],
+        "validation_r2": [validation_score[1]],
+        "validation_rmse": [validation_score[0]],
+        "validation_mae": [validation_score[2]],
+        "test_r2": [test_metrics[1]],
+        "test_rmse": [test_metrics[0]],
+        "test_mae": [test_metrics[2]],
+        "training_energy_kwh": [training_energy_kwh],
+        "validation_energy_kwh": [validation_energy_kwh],
+        "test_energy_kwh": [test_energy_kwh],
+        "description": None,
+    })
+
+    write_to_csv(results_df, RESULTS_CSV_PATH)
+
+
+    test_pred = model.predict(test_data)
+   
+    plot_results( 
+            test_delivery_days, 
+            test_pred, 
+            test_targets, 
+            test_pred_label="Test predictions", 
+            test_target_label="Test targets", 
+            title=f"XGBoost predictions vs. targets, {data_filter}", 
+            y_label="Target price",
+            filename_suffix = "xgboost_test_pred_vs_targets"
+            )
+
