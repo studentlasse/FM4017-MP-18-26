@@ -335,6 +335,14 @@ dataset["day_cos"] = (
     np.cos(2 * np.pi * dataset["hour"] / 24)
 )
 
+dataset["week_sin"] = (
+    np.sin(2 * np.pi * dataset["day_of_week"] / 7)
+)
+
+dataset["week_cos"] = (
+    np.cos(2 * np.pi * dataset["day_of_week"] / 7)
+)
+
 dataset["year_sin"] = (
     np.sin(2 * np.pi * dataset["day_of_year"] / 365)
 )
@@ -375,6 +383,15 @@ price_cols = [
 log(f"creating lag for columns: {price_cols}")
 
 for col in price_cols:
+    dataset[f"{col}_lag1"] = dataset[col].shift(1)
+
+for col in price_cols:
+    dataset[f"{col}_lag2"] = dataset[col].shift(2)
+
+for col in price_cols:
+    dataset[f"{col}_lag3"] = dataset[col].shift(3)
+
+for col in price_cols:
     dataset[f"{col}_lag24"] = dataset[col].shift(24)
 
 for col in price_cols:
@@ -390,7 +407,7 @@ log(f"Completed in {time.time()-step:.2f}s")
 
 step = time.time()
 
-ENTSOE_START = pd.Timestamp("2024-10-01")
+ENTSOE_START = pd.Timestamp("2023-10-01")
 before = len(dataset)
 dataset = dataset[dataset["delivery_day"] >= ENTSOE_START].copy()
 log(f"Dropped {before - len(dataset):,} rows before {ENTSOE_START.date()}")
