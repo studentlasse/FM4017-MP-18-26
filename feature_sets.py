@@ -113,13 +113,6 @@ FEATURE_SETS = {
     "price_DK1_lag168",
     "price_NO1_lag168",
     "price_NO5_lag168",
-
-    "Solar",
-    "Wind Onshore",
-    "Wind Offshore",
-
-    "Forecasted Generation",
-    "Forecasted Load",
 ],
 
     "minimal_set": [
