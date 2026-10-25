@@ -17,14 +17,8 @@ FEATURE_SETS = {
     "flow_NO5_export",
     "flow_NO5_import",
 
-    "capacity_GER",
-    "capacity_NL",
-    "capacity_NO1",
     "capacity_NO5",
 
-    "util_GER",
-    "util_NL",
-    "util_NO1",
     "util_NO5",
 
     "price_DK1",
