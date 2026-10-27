@@ -22,7 +22,7 @@ DATASET_PATH = PROJECT_ROOT / "ml_dataset.csv"
 RESULTS_CSV_PATH = PROJECT_ROOT / "gru_results.csv"
 
 def create_sequences(data, seq_length):
-    """Create sequences of data for gru input."""
+    """Create sequences of data for GRU input."""
     sequences = []
     for i in range(len(data) - seq_length + 1):
         seq = data[i:i + seq_length]
@@ -44,8 +44,6 @@ def prepare_sequences(
     sequence_start = max(context_length - seq_length + 1, 0)
     sequences = sequences[sequence_start:]
 
-    # Each window must be paired with the target of its LAST row, not the
-    # first one. Context rows are only inputs, so they are subtracted here.
     target_start = sequence_start + seq_length - 1 - context_length
     sequence_targets = target_data[target_start:target_start + len(sequences)]
 
@@ -92,9 +90,11 @@ def load_dataset(file_path=DATASET_PATH):
     data = data.sort_values(["delivery_day", "hour"]).reset_index(drop=True)
     forecast_horizon = 1
     data["target_price_next_day"] = data["price_value"].shift(-forecast_horizon)
-    # Predict the change from the last observed price instead of the price
-    # level: the level is not identifiable out-of-sample (and drifts between
-    # train and test periods), the change is.
+
+    # Predict the change from the last observed price instead of the absolute
+    # price level. This reduces sensitivity to price-level shifts between the
+    # training and test periods; the anchor is added back during evaluation.
+    
     data["target_price_delta"] = (
         data["target_price_next_day"] - data["price_value"]
     )
@@ -144,8 +144,8 @@ def train_model(
     learning_rate,
     model_path="best_gru_model.pt",
 ):
-    criterion = torch.nn.MSELoss()  # Mean Squared Error loss
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)  # Adam optimizer
+    criterion = torch.nn.L1Loss() # Using L1 loss (MAE) for training 
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     best_validation_rmse = float("inf")
     epochs_without_improvement = 0
 
@@ -339,17 +339,17 @@ if __name__ == "__main__":
     train_features, train_target_values, train_anchor_values = scale_split(
         train_data, train_targets, train_anchors
     )
-    (
-        validation_features,
-        validation_target_values,
-        validation_anchor_values,
-    ) = scale_split(validation_data, validation_targets, validation_anchors)
+    validation_features, validation_target_values, validation_anchor_values = scale_split(
+        validation_data, validation_targets, validation_anchors
+    )
     test_features, test_target_values, test_anchor_values = scale_split(
         test_data_all, test_targets_all, test_anchors_all
     )
 
     train_data, train_targets, train_anchors = prepare_sequences(
-        train_features, train_target_values, seq_length,
+        train_features,
+        train_target_values,
+        seq_length,
         anchor_data=train_anchor_values,
     )
     validation_data, validation_targets, validation_anchors = prepare_sequences(
@@ -375,7 +375,7 @@ if __name__ == "__main__":
     np.random.seed(42)
     model = GRUModel(
         input_size=train_data.shape[2],
-        hidden_size=32,
+        hidden_size=16,
         num_layers=2,
         output_size=1,
     ).to(device)
@@ -386,7 +386,7 @@ if __name__ == "__main__":
         "target_column": "target_price_delta",
         "target_mode": "delta",
         "input_size": train_data.shape[2],
-        "hidden_size": 32,
+        "hidden_size": 16,
         "num_layers": 2,
         "output_size": 1,
         "feature_mean": feature_scaler.mean_.tolist(),
@@ -407,9 +407,9 @@ if __name__ == "__main__":
         validation_anchors,
         target_scaler,
         checkpoint_metadata,
-        num_epochs=25,
+        num_epochs=50,
         patience=10,
-        learning_rate=0.001,
+        learning_rate=0.03,
         model_path=model_path,
     )
     checkpoint = torch.load(model_path, map_location=device, weights_only=False)
@@ -474,10 +474,6 @@ if __name__ == "__main__":
     def mae(a, b): return np.mean(np.abs(a - b))
     def r2(a, b): return 1 - np.sum((a - b) ** 2) / np.sum((a - a.mean()) ** 2)
 
-    print(f"Persistence RMSE: {rmse(persistence_pred, test_targets_plot):.4f}")
-    print(f"Persistence MAE:  {mae(persistence_pred, test_targets_plot):.4f}")
-    print(f"Persistence R²:   {r2(persistence_pred, test_targets_plot):.4f}")
-
     plot_results(
         delivery_days.loc[test_mask].to_numpy(),
         test_predictions,
@@ -487,5 +483,4 @@ if __name__ == "__main__":
         title=f"GRU predictions vs. targets, {data_filter}",
         y_label="Target price",
         filename_suffix="gru_test_pred_vs_targets",
-        extra_series=[("Persistence (t-1)", persistence_pred)],
     )

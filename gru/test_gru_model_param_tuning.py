@@ -33,13 +33,12 @@ def create_sequences(data, seq_length):
     return np.array(sequences)
 
 def prepare_sequences(
-        feature_data, 
-        target_data, 
-        seq_length, 
-        context_data=None,
-        anchor_data=None
-        ):
-    
+    feature_data,
+    target_data,
+    seq_length,
+    context_data=None,
+    anchor_data=None,
+):
     context_length = 0 if context_data is None else len(context_data)
     if context_data is not None:
         feature_data = np.concatenate((context_data, feature_data), axis=0)
@@ -48,8 +47,6 @@ def prepare_sequences(
     sequence_start = max(context_length - seq_length + 1, 0)
     sequences = sequences[sequence_start:]
 
-    # Each window must be paired with the target of its LAST row, not the
-    # first one. Context rows are only inputs, so they are subtracted here.
     target_start = sequence_start + seq_length - 1 - context_length
     sequence_targets = target_data[target_start:target_start + len(sequences)]
 
@@ -57,7 +54,7 @@ def prepare_sequences(
     if anchor_data is not None:
         anchor_values = anchor_data[target_start:target_start + len(sequences)]
         anchors = torch.tensor(anchor_values, dtype=torch.float32).unsqueeze(1)
-  
+
     return (
         torch.tensor(sequences, dtype=torch.float32),
         torch.tensor(sequence_targets, dtype=torch.float32).unsqueeze(1),
@@ -96,9 +93,11 @@ def load_dataset(file_path=DATASET_PATH):
     data = data.sort_values(["delivery_day", "hour"]).reset_index(drop=True)
     forecast_horizon = 1
     data["target_price_next_day"] = data["price_value"].shift(-forecast_horizon)
-    # Predict the change from the last observed price instead of the price
-    # level: the level is not identifiable out-of-sample (and drifts between
-    # train and test periods), the change is.
+
+    # Predict the change from the last observed price instead of the absolute
+    # price level. This reduces sensitivity to price-level shifts between the
+    # training and test periods; the anchor is added back during evaluation.    
+    
     data["target_price_delta"] = (
         data["target_price_next_day"] - data["price_value"]
     )
@@ -150,7 +149,7 @@ def train_model(
     model_path="best_gru_model.pt",
 ):
     criterion = get_criterion(loss_name)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)  # Adam optimizer
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     best_validation_rmse = float("inf")
     epochs_without_improvement = 0
 
@@ -538,10 +537,10 @@ if __name__ == "__main__":
 
 
     search_space = {
-    "hidden_size": [16, 32, 64, 128],
+    "hidden_size": [16, 32, 64],
     "num_layers": [1, 2],
-    "learning_rate": [0.001, 0.002, 0.003, 0.01],
-    "loss_name": ["mse", "mae", "smooth_l1"],
+    "learning_rate": [0.003, 0.01, 0.03],
+    "loss_name": ["mae"],
     "sequence_length": [24],
     "num_epochs": [50],
     "patience": [10],
