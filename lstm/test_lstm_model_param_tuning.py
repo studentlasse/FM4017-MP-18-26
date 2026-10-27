@@ -96,9 +96,8 @@ def load_dataset(file_path=DATASET_PATH):
     data = data.sort_values(["delivery_day", "hour"]).reset_index(drop=True)
     forecast_horizon = 1
     data["target_price_next_day"] = data["price_value"].shift(-forecast_horizon)
-    # Predict the change from the last observed price instead of the price
-    # level: the level is not identifiable out-of-sample (and drifts between
-    # train and test periods), the change is.
+    # Predict the change from the last observed price. The anchor is added
+    # back during evaluation to reconstruct the predicted price.
     data["target_price_delta"] = (
         data["target_price_next_day"] - data["price_value"]
     )
@@ -457,7 +456,7 @@ if __name__ == "__main__":
     ) = load_dataset()
 
     feature_data = data[feature_columns]
-    target_data = data["target_price_next_day"]
+    target_data = data["target_price_delta"]
     anchor_data = data["price_value"]
     train_data_all = feature_data.loc[train_mask]
     train_targets_all = target_data.loc[train_mask]
@@ -509,7 +508,10 @@ if __name__ == "__main__":
     )
 
     train_data, train_targets, train_anchors = prepare_sequences(
-        train_features, train_target_values, seq_length,
+        train_features,
+        train_target_values,
+        seq_length,
+        anchor_data=train_anchor_values,
     )
     validation_data, validation_targets, validation_anchors = prepare_sequences(
         validation_features,
