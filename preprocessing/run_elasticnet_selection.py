@@ -18,13 +18,15 @@ Selection is performed on the training split only, and by default on the
 first 85% of that window so it matches the train/validation split used by the
 model scripts. The test period never influences which features are kept.
 
-Example
--------
-    # All splits, all three modes
+Configuration
+-------------
+Run settings live in the constants at the top of this file: dataset path,
+candidate feature set, which splits to run, the CV grid, and output paths.
+Edit them and run:
+
     uv run python preprocessing/run_elasticnet_selection.py
 """
 
-import argparse
 import json
 import sys
 from datetime import datetime
@@ -45,6 +47,32 @@ from preprocessing.elasticnet_selection import (
 DATASET_PATH = PROJECT_ROOT / "ml_dataset.csv"
 OUTPUT_PATH = PROJECT_ROOT / "elasticnet_selected_features.json"
 COEFFICIENTS_PATH = PROJECT_ROOT / "elasticnet_selection_results.csv"
+
+# ---- Run configuration ---------------------------------------------------
+# Candidate feature set: a key from feature_sets.py, or "all" for every
+# numeric column in the dataset.
+FEATURE_SET_NAME = "all"
+
+# Split indices to run. None runs every seasonal split. When a subset is
+# given, the output file is replaced with only those splits.
+SPLIT_INDICES = None
+
+# Regularization path and cross-validation grid.
+L1_RATIOS = DEFAULT_L1_RATIOS
+N_ALPHAS = 100
+EPS = 1e-3
+CV_SPLITS = 5
+
+# Fraction of the training window used for selection. 0.85 matches the model
+# scripts' 15% validation hold-out.
+TRAIN_RATIO = 0.85
+
+# Limits applied when turning coefficients into the selected feature list.
+MIN_ABS_COEF = 1e-8
+MAX_FEATURES = None
+
+# Number of top features printed per mode.
+SHOW = 20
 
 SEASONAL_SPLITS = [
     {
@@ -83,7 +111,7 @@ SELECTION_MODES = {
 }
 
 
-def load_training_data(file_path, feature_set_name, split_index, train_ratio=0.85):
+def load_training_data(file_path, feature_set_name, split_index, train_ratio=TRAIN_RATIO):
     """Load the daily dataset and return the training features and target.
 
     ``train_ratio`` keeps only the first fraction of the training window, so
@@ -145,30 +173,31 @@ def load_training_data(file_path, feature_set_name, split_index, train_ratio=0.8
     return X_train, y_train, split
 
 
-def select_for_split(args, split_index):
+def select_for_split(split_index):
     """Run CV once and derive every selection mode for one split."""
     X_train, y_train, split = load_training_data(
-        args.dataset,
-        args.feature_set,
+        DATASET_PATH,
+        FEATURE_SET_NAME,
         split_index,
-        args.train_ratio,
+        TRAIN_RATIO,
     )
 
     cv_selection = select_features_elasticnet(
         X_train,
         y_train,
-        l1_ratios=args.l1_ratios,
-        n_alphas=args.n_alphas,
-        eps=args.eps,
-        n_splits=args.cv_splits,
-        min_abs_coef=args.min_abs_coef,
-        max_features=args.max_features,
+        l1_ratios=L1_RATIOS,
+        n_alphas=N_ALPHAS,
+        eps=EPS,
+        n_splits=CV_SPLITS,
+        min_abs_coef=MIN_ABS_COEF,
+        max_features=MAX_FEATURES,
         alpha_scale=1.0,
     )
 
     alpha_scales = {
-        "aggressive": args.aggressive_alpha_scale,
-        "moderate": args.moderate_alpha_scale,
+        mode: settings["alpha_scale"]
+        for mode, settings in SELECTION_MODES.items()
+        if settings["alpha_scale"] is not None
     }
 
     features = {}
@@ -184,8 +213,8 @@ def select_for_split(args, split_index):
                 y_train,
                 alpha=cv_selection.cv_alpha * alpha_scale,
                 l1_ratio=cv_selection.l1_ratio,
-                min_abs_coef=args.min_abs_coef,
-                max_features=args.max_features,
+                min_abs_coef=MIN_ABS_COEF,
+                max_features=MAX_FEATURES,
             )
 
         features[mode] = selection.selected_features
@@ -203,7 +232,7 @@ def select_for_split(args, split_index):
     alphas["none"] = None
 
     print(f"Split {split_index}: {split['name']}")
-    print(f"  Training rows: {len(X_train)} (train_ratio={args.train_ratio:g})")
+    print(f"  Training rows: {len(X_train)} (train_ratio={TRAIN_RATIO:g})")
     print(
         f"  CV-selected alpha: {cv_selection.cv_alpha:.6g}, "
         f"rho: {cv_selection.l1_ratio:.3g}, "
@@ -218,9 +247,9 @@ def select_for_split(args, split_index):
         "split_name": split["name"],
         "train_period": list(split["train"]),
         "test_period": list(split["test"]),
-        "train_ratio": args.train_ratio,
-        "feature_set": args.feature_set,
-        "cv_folds": args.cv_splits,
+        "train_ratio": TRAIN_RATIO,
+        "feature_set": FEATURE_SET_NAME,
+        "cv_folds": CV_SPLITS,
         "n_training_rows": len(X_train),
         "n_features_total": cv_selection.n_features,
         "cv_alpha": cv_selection.cv_alpha,
@@ -231,9 +260,7 @@ def select_for_split(args, split_index):
         "cv_fold_rmse": cv_selection.cv_fold_rmse,
         "alphas": alphas,
         "mode_alpha_scales": {
-            "aggressive": args.aggressive_alpha_scale,
-            "moderate": args.moderate_alpha_scale,
-            "none": None,
+            mode: settings["alpha_scale"] for mode, settings in SELECTION_MODES.items()
         },
         "mode_feature_counts": {
             mode: len(mode_features) for mode, mode_features in features.items()
@@ -244,184 +271,53 @@ def select_for_split(args, split_index):
     return split_payload, coefficient_tables
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description=(
-            "Select aggressive, moderate, and no-selection feature sets with "
-            "ElasticNet for every seasonal split."
-        )
-    )
-    parser.add_argument(
-        "--dataset",
-        type=Path,
-        default=DATASET_PATH,
-        help=f"Path to the ML dataset (default: {DATASET_PATH.name}).",
-    )
-    parser.add_argument(
-        "--feature-set",
-        default="all",
-        choices=sorted(FEATURE_SETS) + ["all"],
-        help=(
-            "Candidate feature set: a key from feature_sets.py, or 'all' "
-            "for every numeric column in the dataset (default: all)."
-        ),
-    )
-    parser.add_argument(
-        "--split-index",
-        type=int,
-        nargs="+",
-        default=None,
-        choices=range(len(SEASONAL_SPLITS)),
-        help=(
-            "Split indices to run. Omit to run every seasonal split. When a "
-            "subset is given, the output file is replaced with only those "
-            "splits."
-        ),
-    )
-    parser.add_argument(
-        "--l1-ratios",
-        default=",".join(f"{value:g}" for value in DEFAULT_L1_RATIOS),
-        help=(
-            "Comma-separated rho values tried by ElasticNetCV "
-            "(default: 0.05 to 1.0 in 20 steps)."
-        ),
-    )
-    parser.add_argument(
-        "--n-alphas",
-        type=int,
-        default=100,
-        help="Number of regularization strengths on the path (default: 100).",
-    )
-    parser.add_argument(
-        "--eps",
-        type=float,
-        default=1e-3,
-        help=(
-            "Ratio between the smallest and largest alpha on the "
-            "log-spaced path (default: 1e-3)."
-        ),
-    )
-    parser.add_argument(
-        "--cv-splits",
-        type=int,
-        default=5,
-        help="Number of TimeSeriesSplit folds (default: 5).",
-    )
-    parser.add_argument(
-        "--train-ratio",
-        type=float,
-        default=0.85,
-        help=(
-            "Fraction of the training window used for selection. Use 0.85 "
-            "to match the model scripts' 15%% validation hold-out "
-            "(default: 0.85)."
-        ),
-    )
-    parser.add_argument(
-        "--min-abs-coef",
-        type=float,
-        default=1e-8,
-        help="Minimum absolute coefficient for a feature to be kept.",
-    )
-    parser.add_argument(
-        "--max-features",
-        type=int,
-        default=None,
-        help="Keep at most this many features, ranked by absolute coefficient.",
-    )
-    parser.add_argument(
-        "--aggressive-alpha-scale",
-        type=float,
-        default=SELECTION_MODES["aggressive"]["alpha_scale"],
-        help=(
-            "Multiplier on the CV-selected alpha for the aggressive set (default: 1.0)."
-        ),
-    )
-    parser.add_argument(
-        "--moderate-alpha-scale",
-        type=float,
-        default=SELECTION_MODES["moderate"]["alpha_scale"],
-        help=(
-            "Multiplier on the CV-selected alpha for the moderate set "
-            "(default: 0.2; smaller keeps more features)."
-        ),
-    )
-    parser.add_argument(
-        "--show",
-        type=int,
-        default=20,
-        help="Number of top features to print per mode (default: 20).",
-    )
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default=OUTPUT_PATH,
-        help=f"Selected feature JSON (default: {OUTPUT_PATH.name}).",
-    )
-    parser.add_argument(
-        "--coefficients-output",
-        type=Path,
-        default=COEFFICIENTS_PATH,
-        help=f"Coefficient CSV (default: {COEFFICIENTS_PATH.name}).",
-    )
-    return parser.parse_args()
-
-
 def main():
-    args = parse_args()
-    args.l1_ratios = [float(value) for value in args.l1_ratios.split(",") if value]
+    if not 0 < TRAIN_RATIO <= 1:
+        raise ValueError("TRAIN_RATIO must be in (0, 1].")
 
-    if args.aggressive_alpha_scale <= 0 or args.moderate_alpha_scale <= 0:
-        raise ValueError("Alpha scales must be greater than 0.")
+    for mode, settings in SELECTION_MODES.items():
+        alpha_scale = settings["alpha_scale"]
+        if alpha_scale is not None and alpha_scale <= 0:
+            raise ValueError(f"Alpha scale for mode {mode!r} must be greater than 0.")
 
-    if args.split_index is None:
+    if SPLIT_INDICES is None:
         split_indices = list(range(len(SEASONAL_SPLITS)))
     else:
-        split_indices = sorted(set(args.split_index))
+        split_indices = sorted(set(SPLIT_INDICES))
 
     splits = {}
     coefficient_tables = []
 
     for split_index in split_indices:
-        split_payload, tables = select_for_split(args, split_index)
+        split_payload, tables = select_for_split(split_index)
         splits[str(split_index)] = split_payload
         coefficient_tables.extend(tables)
 
     modes = {
-        "aggressive": {
-            "alpha_scale": args.aggressive_alpha_scale,
-            "description": SELECTION_MODES["aggressive"]["description"],
-        },
-        "moderate": {
-            "alpha_scale": args.moderate_alpha_scale,
-            "description": SELECTION_MODES["moderate"]["description"],
-        },
-        "none": {
-            "alpha_scale": None,
-            "description": SELECTION_MODES["none"]["description"],
-        },
+        mode: dict(settings)
+        for mode, settings in SELECTION_MODES.items()
     }
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
-        "dataset": str(args.dataset),
-        "feature_set": args.feature_set,
-        "train_ratio": args.train_ratio,
+        "dataset": str(DATASET_PATH),
+        "feature_set": FEATURE_SET_NAME,
+        "train_ratio": TRAIN_RATIO,
         "cv_method": (
-            f"expanding-window TimeSeriesSplit({args.cv_splits}) "
+            f"expanding-window TimeSeriesSplit({CV_SPLITS}) "
             "with fold-wise preprocessing"
         ),
-        "cv_folds": args.cv_splits,
-        "rho_candidates": args.l1_ratios,
-        "n_alphas": args.n_alphas,
-        "eps": args.eps,
+        "cv_folds": CV_SPLITS,
+        "rho_candidates": list(L1_RATIOS),
+        "n_alphas": N_ALPHAS,
+        "eps": EPS,
         "candidate_features": next(iter(splits.values()))["features"]["none"],
         "modes": modes,
         "splits": splits,
     }
 
-    args.output.write_text(
+    OUTPUT_PATH.write_text(
         json.dumps(payload, indent=2) + "\n",
         encoding="utf-8",
     )
@@ -433,21 +329,21 @@ def main():
             ascending=[True, True, False],
             kind="mergesort",
         ).reset_index(drop=True)
-        args.coefficients_output.parent.mkdir(parents=True, exist_ok=True)
-        coefficients.to_csv(args.coefficients_output, index=False)
+        COEFFICIENTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        coefficients.to_csv(COEFFICIENTS_PATH, index=False)
 
     for split_payload in splits.values():
         print(split_payload["split_name"])
         for mode in SELECTION_MODES:
             selected = split_payload["features"][mode]
             print(f"  {mode} ({len(selected)} features):")
-            for feature in selected[: args.show]:
+            for feature in selected[:SHOW]:
                 print(f"    {feature}")
         print()
 
-    print(f"Selected features written to {args.output}")
+    print(f"Selected features written to {OUTPUT_PATH}")
     if coefficient_tables:
-        print(f"Coefficient table written to {args.coefficients_output}")
+        print(f"Coefficient table written to {COEFFICIENTS_PATH}")
 
 
 if __name__ == "__main__":
