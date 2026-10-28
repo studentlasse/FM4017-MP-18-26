@@ -15,11 +15,16 @@ from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_err
 
 from gru.gru_model import GRUModel
 from logger.csv_logger import write_to_csv
-from feature_sets import FEATURE_SETS
+from feature_sets import load_feature_set, load_feature_set_metadata
 from plotter.result_plotter import plot_results
 
 DATASET_PATH = PROJECT_ROOT / "ml_dataset.csv"
 RESULTS_CSV_PATH = PROJECT_ROOT / "gru_results.csv"
+
+# Seasonal split and feature selection mode to evaluate. The feature set is
+# read from elasticnet_selected_features.json for this exact split and mode.
+SPLIT_INDEX = 0
+SELECTION_MODE = "moderate"  # "aggressive", "moderate", or "none"
 
 def create_sequences(data, seq_length):
     """Create sequences of data for GRU input."""
@@ -86,7 +91,7 @@ def load_dataset(file_path=DATASET_PATH):
         ),
     ]
 
-    data_filter, test_mask, train_mask = seasonal_splits[1]
+    data_filter, test_mask, train_mask = seasonal_splits[SPLIT_INDEX]
     data = data.sort_values(["delivery_day", "hour"]).reset_index(drop=True)
     forecast_horizon = 1
     data["target_price_next_day"] = data["price_value"].shift(-forecast_horizon)
@@ -101,8 +106,11 @@ def load_dataset(file_path=DATASET_PATH):
     data = data.dropna(subset=["target_price_next_day"])
     delivery_days = data["delivery_day"].copy()
     data = data.drop(columns=["delivery_day"])
-    feature_set_name = "full_set"
-    feature_columns = FEATURE_SETS[feature_set_name]
+    # Feature set for this run's split and selection mode, built by
+    # preprocessing/run_elasticnet_selection.py.
+    feature_set_name = SELECTION_MODE
+    feature_columns = load_feature_set(SPLIT_INDEX, SELECTION_MODE)
+    selection_metadata = load_feature_set_metadata(SPLIT_INDEX, SELECTION_MODE)
 
     return (
         data,
@@ -113,6 +121,7 @@ def load_dataset(file_path=DATASET_PATH):
         forecast_horizon,
         feature_set_name,
         delivery_days,
+        selection_metadata,
     )
 
 def measure_energy(operation, *args, **kwargs):
@@ -294,7 +303,14 @@ if __name__ == "__main__":
         forecast_horizon,
         feature_set_name,
         delivery_days,
+        selection_metadata,
     ) = load_dataset()
+
+    print(
+        f"Feature selection: split {SPLIT_INDEX} / {SELECTION_MODE} "
+        f"({len(feature_columns)} of {selection_metadata['n_features_total']} "
+        "features)"
+    )
 
     feature_data = data[feature_columns]
     target_data = data["target_price_delta"]

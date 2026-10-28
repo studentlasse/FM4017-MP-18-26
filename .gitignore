@@ -222,3 +222,10 @@ __marimo__/
 # Dataset
 Dataset/Nordpool
 ml_dataset.*
+
+#models
+*.pt
+
+#results
+*results.csv
+elasticnet_selected_features.json

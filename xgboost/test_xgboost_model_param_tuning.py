@@ -10,7 +10,7 @@ from codecarbon import OfflineEmissionsTracker
 from xgboost import XGBRegressor
 from sklearn.metrics import r2_score, root_mean_squared_error, mean_absolute_error
 from logger.csv_logger import write_to_csv
-from feature_sets import FEATURE_SETS
+from feature_sets import load_feature_set, load_feature_set_metadata
 from plotter.result_plotter import plot_results
 
 
@@ -20,6 +20,11 @@ import random
 
 DATASET_PATH = PROJECT_ROOT / "ml_dataset.csv"
 RESULTS_CSV_PATH = PROJECT_ROOT / "xgboost_search_results.csv"
+
+# Seasonal split and feature selection mode to evaluate. The feature set is
+# read from elasticnet_selected_features.json for this exact split and mode.
+SPLIT_INDEX = 0
+SELECTION_MODE = "moderate"  # "aggressive", "moderate", or "none"
 
 def load_dataset(file_path=DATASET_PATH):
     data = pd.read_csv(file_path)
@@ -54,7 +59,7 @@ def load_dataset(file_path=DATASET_PATH):
         ]
         
     
-    data_filter, test_mask, train_mask = seasonal_splits[0]
+    data_filter, test_mask, train_mask = seasonal_splits[SPLIT_INDEX]
 
     data = data.sort_values(["delivery_day", "hour"]).reset_index(drop=True)
 
@@ -72,11 +77,23 @@ def load_dataset(file_path=DATASET_PATH):
 
     data = data.drop(columns=drop_cols)
 
-    FEATURE_SET_NAME = "full_set"
+    # Feature set for this run's split and selection mode, built by
+    # preprocessing/run_elasticnet_selection.py.
+    feature_set_name = SELECTION_MODE
+    feature_columns = load_feature_set(SPLIT_INDEX, SELECTION_MODE)
+    selection_metadata = load_feature_set_metadata(SPLIT_INDEX, SELECTION_MODE)
 
-    feature_columns = FEATURE_SETS[FEATURE_SET_NAME]
-
-    return data, feature_columns, train_mask, test_mask, data_filter, forecast_horizon, FEATURE_SET_NAME, delivery_days
+    return (
+        data,
+        feature_columns,
+        train_mask,
+        test_mask,
+        data_filter,
+        forecast_horizon,
+        feature_set_name,
+        delivery_days,
+        selection_metadata,
+    )
 
 def measure_energy(operation, *args, **kwargs):
     tracker = OfflineEmissionsTracker(
@@ -231,7 +248,14 @@ def make_xgboost(config):
 
 
 if __name__ == "__main__":
-    data, feature_columns, train_mask, test_mask, data_filter, forecast_horizon, feature_set_name, delivery_days = load_dataset()
+    (data, feature_columns, train_mask, test_mask, data_filter, forecast_horizon,
+     feature_set_name, delivery_days, selection_metadata) = load_dataset()
+
+    print(
+        f"Feature selection: split {SPLIT_INDEX} / {SELECTION_MODE} "
+        f"({len(feature_columns)} of {selection_metadata['n_features_total']} "
+        "features)"
+    )
 
     feature_data = data[feature_columns]
     target_data = data['target_price_next_day']

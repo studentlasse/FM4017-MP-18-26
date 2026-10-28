@@ -9,7 +9,7 @@ The project focuses on evaluating the trade-off between predictive quality and e
 ## Repository structure
 
 - `Dataset/` – datasets used for experiments and evaluation.
-- `preprocessing/` – scripts for transforming raw data into a usable formats for model training. This folder also includes an example workflow for training a Random Forest Regressor (RFR) model.
+- `preprocessing/` – scripts for transforming raw data into a usable formats for model training. With ElasticNet-based feature selection (`run_elasticnet_selection.py`).
 - `gru/` - implementation for training and evaluating a GRU model.
 - `lstm/` – implementation for training and evaluating an LSTM model.
 - `presentation/` – Presentation material as plots in jupyter notebook.
