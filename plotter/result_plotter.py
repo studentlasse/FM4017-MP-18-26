@@ -45,6 +45,7 @@ def plot_barchart(results, metrics):
         "rf": "tab:green",
         "dummy": "tab:orange",
         "lstm": "tab:blue",
+        "gru": "tab:purple",
     }
 
     for metric in metrics:
