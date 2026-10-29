@@ -155,12 +155,16 @@ if __name__ == "__main__":
     validation_data = train_data_all.iloc[validation_end:]
     validation_targets = train_targets_all.iloc[validation_end:]
 
-
+    parameters = {
+        "n_estimators": 300,
+        "random_state": 42,
+        "n_jobs": -1
+    }
 
     model = RandomForestRegressor(
-        n_estimators=300,
-        random_state=42,
-        n_jobs=-1,
+        n_estimators = parameters["n_estimators"],
+        random_state = parameters["random_state"],
+        n_jobs = parameters["n_jobs"],
     )
 
     _, training_energy_kwh = measure_energy(
@@ -204,6 +208,8 @@ if __name__ == "__main__":
     print(f"Validation energy consumption: {validation_energy_kwh:.9f} kWh")
     print(f"Test prediction energy consumption: {test_energy_kwh:.9f} kWh")
 
+
+
     results_df = pd.DataFrame({
         "data_filter": data_filter,
         "forecast_horizon": [forecast_horizon],
@@ -220,6 +226,11 @@ if __name__ == "__main__":
         "test_energy_kwh": [test_energy_kwh],
         "description": None,
     })
+
+    parameters_df = pd.DataFrame([
+    {f"param_{name}": value for name, value in parameters.items()}
+    ])
+    results_df = pd.concat([results_df, parameters_df], axis=1)
 
     write_to_csv(results_df, RESULTS_CSV_PATH)
 

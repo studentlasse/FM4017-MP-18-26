@@ -23,8 +23,8 @@ RESULTS_CSV_PATH = PROJECT_ROOT / "lstm_results.csv"
 
 # Seasonal split and feature selection mode to evaluate. The feature set is
 # read from elasticnet_selected_features.json for this exact split and mode.
-SPLIT_INDEX = 0
-SELECTION_MODE = "moderate"  # "aggressive", "moderate", or "none"
+SPLIT_INDEX = 1
+SELECTION_MODE = "none"  # "aggressive", "moderate", or "none"
 VALIDATION_FRACTION = 0.15
 TRAIN_FRACTION = 1.0 - VALIDATION_FRACTION
 
@@ -383,13 +383,23 @@ if __name__ == "__main__":
         anchor_data=test_anchor_values,
     )
 
+    parameters = {
+        "hidden_size": 16,
+        "num_layers": 1,
+        "output_size": 1,
+        "num_epochs" : 50,
+        "patience" : 10,
+        "learning_rate" : 0.03,
+    }
+
+
     torch.manual_seed(42)
     np.random.seed(42)
     model = LSTMModel(
         input_size=train_data.shape[2],
-        hidden_size=16,
-        num_layers=1,
-        output_size=1,
+        hidden_size=parameters["hidden_size"],
+        num_layers=parameters["num_layers"],
+        output_size=parameters["output_size"],
     ).to(device)
     model_path = "best_lstm_model.pt"
     checkpoint_metadata = {
@@ -398,9 +408,9 @@ if __name__ == "__main__":
         "target_column": "target_price_delta",
         "target_mode": "delta",
         "input_size": train_data.shape[2],
-        "hidden_size": 16,
-        "num_layers": 1,
-        "output_size": 1,
+        "hidden_size": parameters["hidden_size"],
+        "num_layers": parameters["num_layers"],
+        "output_size": parameters["output_size"],
         "feature_mean": feature_scaler.mean_.tolist(),
         "feature_scale": feature_scaler.scale_.tolist(),
         "target_mean": target_scaler.mean_.tolist(),
@@ -419,9 +429,9 @@ if __name__ == "__main__":
         validation_anchors,
         target_scaler,
         checkpoint_metadata,
-        num_epochs=50,
-        patience=10,
-        learning_rate=0.03,
+        num_epochs=parameters["num_epochs"],
+        patience=parameters["patience"],
+        learning_rate=parameters["learning_rate"],
         model_path=model_path,
     )
     checkpoint = torch.load(model_path, map_location=device, weights_only=False)
@@ -452,7 +462,7 @@ if __name__ == "__main__":
     print(f"Training energy consumption: {training_energy_kwh:.9f} kWh")
     print(f"Validation energy consumption: {validation_energy_kwh:.9f} kWh")
     print(f"Test prediction energy consumption: {test_energy_kwh:.9f} kWh")
-
+    
     results_df = pd.DataFrame({
         "data_filter": data_filter,
         "forecast_horizon": [forecast_horizon],
@@ -469,6 +479,12 @@ if __name__ == "__main__":
         "test_energy_kwh": [test_energy_kwh],
         "description": None,
     })
+
+    parameters_df = pd.DataFrame([
+    {f"param_{name}": value for name, value in parameters.items()}
+    ])
+    results_df = pd.concat([results_df, parameters_df], axis=1)
+
     write_to_csv(results_df, RESULTS_CSV_PATH)
 
     test_predictions = target_scaler.inverse_transform(
