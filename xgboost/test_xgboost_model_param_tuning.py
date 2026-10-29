@@ -263,8 +263,8 @@ if __name__ == "__main__":
     "reg_lambda": [1.0, 5.0, 10.0],
     }
 
-    #search_method = "grid"
-    search_method = "random"
+    search_method = "grid"
+    #search_method = "random"
 
     if search_method == "random":
         (results, xgb_models), search_energy_kwh = measure_energy(
@@ -276,7 +276,7 @@ if __name__ == "__main__":
             X_validation=validation_data,
             y_validation=validation_targets,
             method="random",
-            n_iter=5,
+            n_iter=20,
             random_state=42,
         )
 
@@ -304,15 +304,14 @@ if __name__ == "__main__":
     best_config = results.iloc[0].to_dict()
 
     best_model = make_xgboost(best_config)
-
-    _, training_energy_kwh = measure_energy(
-        train_model,
+    best_model = train_model(
         best_model,
         train_data,
         train_targets,
         validation_data,
         validation_targets,
     )
+
 
     validation_score, validation_energy_kwh = measure_energy(
         evaluate_model, 
@@ -349,24 +348,16 @@ if __name__ == "__main__":
         "search_method": search_method,
         "n_configurations": len(results),
         "feature_columns": [feature_set_name],
-        "validation_r2": [validation_score[1]],
-        "validation_rmse": [validation_score[0]],
+        "validation_r2": [validation_score[0]],
+        "validation_rmse": [validation_score[1]],
         "validation_mae": [validation_score[2]],
-        "test_r2": [test_metrics[1]],
-        "test_rmse": [test_metrics[0]],
+        "test_r2": [test_metrics[0]],
+        "test_rmse": [test_metrics[1]],
         "test_mae": [test_metrics[2]],
-        "training_energy_kwh": [training_energy_kwh],
+        "search_energy_kwh": [search_energy_kwh],
         "validation_energy_kwh": [validation_energy_kwh],
         "test_energy_kwh": [test_energy_kwh],
-        "search_energy_kwh": [search_energy_kwh],
         "description": f"Best model from {search_method} search",
-        "best_param_n_estimators": best_config["n_estimators"],
-        "best_param_max_depth": best_config["max_depth"],
-        "best_param_learning_rate": best_config["learning_rate"],
-        "best_param_subsample": best_config["subsample"],
-        "best_param_colsample_bytree": best_config["colsample_bytree"],
-        "best_param_min_child_weight": best_config["min_child_weight"],
-        "best_param_reg_lambda": best_config["reg_lambda"],
     })
     write_to_csv(results_df, RESULTS_CSV_PATH)
     

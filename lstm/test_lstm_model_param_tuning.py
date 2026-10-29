@@ -541,8 +541,8 @@ if __name__ == "__main__":
     "patience": [10],
     }
 
-    #search_method = "grid"
-    search_method = "random"
+    search_method = "grid"
+    #search_method = "random"
 
     if search_method == "grid":
         ####  Grid search
@@ -617,46 +617,8 @@ if __name__ == "__main__":
         output_size=1,
     ).to(device)
 
-    checkpoint_metadata = {
-        "feature_columns": feature_columns,
-        "sequence_length": seq_length,
-        "target_column": "target_price_delta",
-        "target_mode": "delta",
-        "hidden_size": int(best_config["hidden_size"]),
-        "num_layers": int(best_config["num_layers"]),
-        "learning_rate": float(best_config["learning_rate"]),
-        "loss_name": best_config["loss_name"],
-        "sequence_length": int(best_config["sequence_length"]),
-        "input_size": train_data.shape[2],
-        "output_size": 1,
-        "feature_mean": feature_scaler.mean_.tolist(),
-        "feature_scale": feature_scaler.scale_.tolist(),
-        "target_mean": target_scaler.mean_.tolist(),
-        "target_scale": target_scaler.scale_.tolist(),
-        "test_period": data_filter,
-        "forecast_horizon": forecast_horizon,
-    }
-
-    tuned_checkpoint_path = PROJECT_ROOT / "lstm_checkpoints" / "retuned_best_model.pt"
-
-    _, training_energy_kwh = measure_energy(
-            train_model,
-            best_model,
-            train_data,
-            train_targets,
-            validation_data,
-            validation_targets,
-            validation_anchors,
-            target_scaler,
-            checkpoint_metadata,
-            num_epochs=best_config["num_epochs"],
-            patience=best_config["patience"],
-            learning_rate=best_config["learning_rate"],
-            model_path=tuned_checkpoint_path,
-        )
-
     checkpoint = torch.load(
-        tuned_checkpoint_path,
+        best_checkpoint_path,
         map_location=device,
         weights_only=False,
     )
@@ -701,18 +663,10 @@ if __name__ == "__main__":
         "test_r2": [test_metrics[0]],
         "test_rmse": [test_metrics[1]],
         "test_mae": [test_metrics[2]],
-        "training_energy_kwh": [training_energy_kwh],
+        "search_energy_kwh": [search_energy_kwh],
         "validation_energy_kwh": [validation_energy_kwh],
         "test_energy_kwh": [test_energy_kwh],
-        "search_energy_kwh": [search_energy_kwh],
         "description": f"Best model from {search_method} search",
-        "best_param_hidden_size": best_config["hidden_size"],
-        "best_param_num_layers": best_config["num_layers"],
-        "best_param_learning_rate": best_config["learning_rate"],
-        "best_param_loss_name": best_config["loss_name"],
-        "best_param_sequence_length": best_config["sequence_length"],
-        "best_param_num_epochs": best_config["num_epochs"],
-        "best_param_patience": best_config["patience"],
     })
     write_to_csv(results_df, RESULTS_CSV_PATH)
 

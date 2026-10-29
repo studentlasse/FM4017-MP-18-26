@@ -264,7 +264,7 @@ if __name__ == "__main__":
         X_validation=validation_data,
         y_validation=validation_targets,
         method="random",
-        n_iter=5,
+        n_iter=20,
         random_state=42,
         )
 
@@ -293,8 +293,7 @@ if __name__ == "__main__":
     best_config = results.iloc[0].to_dict()
     
     best_model = make_random_forest(best_config)
-    _, training_energy_kwh = measure_energy(
-        train_model,
+    best_model = train_model(
         best_model,
         train_data,
         train_targets,
@@ -337,22 +336,16 @@ if __name__ == "__main__":
         "search_method": search_method,
         "n_configurations": len(results),
         "feature_columns": [feature_set_name],
-        "validation_r2": [validation_score[1]],
-        "validation_rmse": [validation_score[0]],
+        "validation_r2": [validation_score[0]],
+        "validation_rmse": [validation_score[1]],
         "validation_mae": [validation_score[2]],
-        "test_r2": [test_metrics[1]],
-        "test_rmse": [test_metrics[0]],
+        "test_r2": [test_metrics[0]],
+        "test_rmse": [test_metrics[1]],
         "test_mae": [test_metrics[2]],
-        "training_energy_kwh": [training_energy_kwh],
+        "search_energy_kwh": [search_energy_kwh],
         "validation_energy_kwh": [validation_energy_kwh],
         "test_energy_kwh": [test_energy_kwh],
-        "search_energy_kwh": [search_energy_kwh],
         "description": f"Best model from {search_method} search",
-        "best_param_n_estimators": best_config["n_estimators"],
-        "best_param_max_depth": best_config["max_depth"],
-        "best_param_min_samples_split": best_config["min_samples_split"],
-        "best_param_min_samples_leaf": best_config["min_samples_leaf"],
-        "best_param_max_features": best_config["max_features"],
     })
     write_to_csv(results_df, RESULTS_CSV_PATH)
 
