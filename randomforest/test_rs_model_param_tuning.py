@@ -65,6 +65,11 @@ def load_dataset(file_path=DATASET_PATH):
     forecast_horizon = 1
 
     data["target_price_next_day"] = data["price_value"].shift(-forecast_horizon)
+    # Predict the price change instead of the price level. The current price
+    # (anchor) is added back during evaluation.
+    data["target_price_delta"] = (
+        data["target_price_next_day"] - data["price_value"]
+    )
 
     data = data.dropna(subset=["target_price_next_day"])    
 
@@ -119,11 +124,15 @@ def train_model(model, X_train, y_train, X_validation, y_validation):
 def predict(model, data):
     return model.predict(data)
 
-def evaluate_model(model, data, targets):
+def evaluate_model(model, data, targets, anchors):
 
     predictions = model.predict(data)
+    anchors = np.asarray(anchors)
 
-    
+    # Convert predicted and actual deltas back to prices using the anchor.
+    predictions = predictions + anchors
+    targets = targets + anchors
+
     rmse = root_mean_squared_error(targets, predictions)
     r2 = r2_score(targets, predictions)
     mae = mean_absolute_error(targets, predictions)
@@ -137,6 +146,7 @@ def train_and_score_model(
     y_train,
     X_validation,
     y_validation,
+    validation_anchors,
 ):
 
     model = model_factory(config)
@@ -152,6 +162,7 @@ def train_and_score_model(
         model,
         X_validation,
         y_validation,
+        validation_anchors,
     )
 
     return {
@@ -169,6 +180,7 @@ def run_search(
     y_train,
     X_validation,
     y_validation,
+    validation_anchors,
     method="grid",
     n_iter=20,
     random_state=42,
@@ -206,6 +218,7 @@ def run_search(
             y_train=y_train,
             X_validation=X_validation,
             y_validation=y_validation,
+            validation_anchors=validation_anchors,
         )
 
         fitted_models.append(result.pop("model"))
@@ -248,23 +261,28 @@ if __name__ == "__main__":
     )
 
     feature_data = data[feature_columns]
-    target_data = data['target_price_next_day']
+    target_data = data['target_price_delta']
+    anchor_data = data['price_value']
 
 
     train_data_all = feature_data.loc[train_mask]
     train_targets_all = target_data.loc[train_mask]
+    train_anchors_all = anchor_data.loc[train_mask]
 
     test_data = feature_data.loc[test_mask]
     test_targets = target_data.loc[test_mask]
+    test_anchors = anchor_data.loc[test_mask]
     test_delivery_days = delivery_days.iloc[test_mask]
 
     validation_end = int(len(train_data_all) * 0.85)
 
     train_data = train_data_all.iloc[:validation_end]
     train_targets = train_targets_all.iloc[:validation_end]
+    train_anchors = train_anchors_all.iloc[:validation_end]
 
     validation_data = train_data_all.iloc[validation_end:]
     validation_targets = train_targets_all.iloc[validation_end:]
+    validation_anchors = train_anchors_all.iloc[validation_end:]
 
 
     search_space = {
@@ -287,6 +305,7 @@ if __name__ == "__main__":
         y_train=train_targets,
         X_validation=validation_data,
         y_validation=validation_targets,
+        validation_anchors=validation_anchors,
         method="random",
         n_iter=5,
         random_state=42,
@@ -306,6 +325,7 @@ if __name__ == "__main__":
             y_train=train_targets,
             X_validation=validation_data,
             y_validation=validation_targets,
+            validation_anchors=validation_anchors,
             method="grid",
         )
 
@@ -331,6 +351,7 @@ if __name__ == "__main__":
         best_model,
         validation_data,
         validation_targets,
+        validation_anchors,
     )
     
     test_metrics, test_energy_kwh = measure_energy(
@@ -338,6 +359,7 @@ if __name__ == "__main__":
         best_model,
         test_data,
         test_targets,
+        test_anchors,
     )
 
     importance = pd.DataFrame(
@@ -381,12 +403,13 @@ if __name__ == "__main__":
     write_to_csv(results_df, RESULTS_CSV_PATH)
 
 
-    test_pred = best_model.predict(test_data)
-   
+    test_pred = best_model.predict(test_data) + test_anchors.to_numpy()
+    test_targets_plot = test_targets.to_numpy() + test_anchors.to_numpy()
+
     plot_results( 
         test_delivery_days, 
         test_pred, 
-        test_targets, 
+        test_targets_plot, 
         test_pred_label="Test predictions", 
         test_target_label="Test targets", 
         title=f"Random Forest predictions vs. targets, {data_filter}", 
