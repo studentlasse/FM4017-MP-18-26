@@ -14,7 +14,7 @@ from torch.utils.data import TensorDataset, DataLoader
 from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
 
 from lstm.lstm_model import LSTMModel
-from logger.csv_logger import write_to_csv
+from logger.csv_logger import write_to_csv, save_plot_csv
 from feature_sets import load_feature_set, load_feature_set_metadata
 from plotter.result_plotter import plot_results
 
@@ -716,6 +716,20 @@ if __name__ == "__main__":
     test_targets_plot = target_scaler.inverse_transform(
         test_targets.cpu().numpy()
     ).ravel() + test_anchors.numpy().ravel()
+
+    plot_data = pd.DataFrame({
+        "delivery_day": pd.to_datetime(delivery_days.loc[test_mask]).to_numpy(),
+        "test_prediction": test_predictions,
+        "test_target": test_targets_plot,
+        })
+    
+    split_name = f"split_{SPLIT_INDEX}"
+    feature_info = f"{SELECTION_MODE}_{len(feature_columns)}features"
+
+    plot_data_description = (f"_lstm_tuning_{split_name}_{feature_info}")
+
+    save_plot_csv(plot_data, plot_data_description)
+    
     plot_results(
         delivery_days.loc[test_mask].to_numpy(),
         test_predictions,
