@@ -14,7 +14,7 @@ from feature_sets import load_feature_set, load_feature_set_metadata
 from plotter.result_plotter import plot_results
 
 DATASET_PATH = PROJECT_ROOT / "ml_dataset.csv"
-RESULTS_CSV_PATH = PROJECT_ROOT / "rf_results.csv"
+RESULTS_CSV_PATH = PROJECT_ROOT / "results/rf_results.csv"
 
 # Seasonal split and feature selection mode to evaluate. The feature set is
 # read from elasticnet_selected_features.json for this exact split and mode.
@@ -135,15 +135,55 @@ def evaluate_model(model, data, targets, anchors):
 
     return rmse, r2, mae
 
+def repeated_test_evaluation(
+    model,
+    data,
+    targets,
+    anchors,
+    repeats=10,
+):
+    metrics = []
+
+    for _ in range(repeats):
+        metrics.append(
+            evaluate_model(
+                model,
+                data,
+                targets,
+                anchors,
+            )
+        )
+
+    metrics = np.array(metrics)
+    return metrics.mean(axis=0), metrics.std(axis=0)
+
+def train_and_validate_model(
+    model,
+    train_data,
+    train_targets,
+    validation_data,
+    validation_targets,
+    validation_anchors,
+):
+    model = train_model(
+        model,
+        train_data,
+        train_targets,
+        validation_data,
+        validation_targets,
+    )
+    validation_score = evaluate_model(
+        model,
+        validation_data,
+        validation_targets,
+        validation_anchors,
+    )
+    return model, validation_score
+
 if __name__ == "__main__":
     (data, feature_columns, train_mask, test_mask, data_filter, forecast_horizon,
      feature_set_name, delivery_days, selection_metadata) = load_dataset()
 
-    print(
-        f"Feature selection: split {SPLIT_INDEX} / {SELECTION_MODE} "
-        f"({len(feature_columns)} of {selection_metadata['n_features_total']} "
-        "features)"
-    )
 
     feature_data = data[feature_columns]
     target_data = data['target_price_delta']
@@ -181,29 +221,23 @@ if __name__ == "__main__":
         n_jobs = parameters["n_jobs"],
     )
 
-    _, training_energy_kwh = measure_energy(
-        train_model,
+    (model, validation_score), training_energy_kwh = measure_energy(
+        train_and_validate_model,
         model,
         train_data,
         train_targets,
         validation_data,
         validation_targets,
-    )
-
-    validation_score, validation_energy_kwh = measure_energy(
-        evaluate_model,
-        model,
-        validation_data,
-        validation_targets,
         validation_anchors,
     )
 
-    test_metrics, test_energy_kwh = measure_energy(
-        evaluate_model,
+    (test_metrics, test_metrics_std), test_energy_kwh = measure_energy(
+        repeated_test_evaluation,
         model,
         test_data,
         test_targets,
         test_anchors,
+        repeats=10,
     )
 
     importance = pd.DataFrame(
@@ -212,17 +246,7 @@ if __name__ == "__main__":
             "importance": model.feature_importances_,
         }
     ).sort_values("importance", ascending=False)
-    print(importance.head(20))
 
-    print(f"Validation R²: {validation_score[1]:.4f}")
-    print(f"Validation RMSE: {validation_score[0]:.4f}")
-    print(f"Validation MAE: {validation_score[2]:.4f}")
-    print(f"Test R²: {test_metrics[1]:.4f}")
-    print(f"Test RMSE: {test_metrics[0]:.4f}")
-    print(f"Test MAE: {test_metrics[2]:.4f}")
-    print(f"Training energy consumption: {training_energy_kwh:.9f} kWh")
-    print(f"Validation energy consumption: {validation_energy_kwh:.9f} kWh")
-    print(f"Test prediction energy consumption: {test_energy_kwh:.9f} kWh")
 
 
 
@@ -238,8 +262,7 @@ if __name__ == "__main__":
         "test_rmse": [test_metrics[0]],
         "test_mae": [test_metrics[2]],
         "training_energy_kwh": [training_energy_kwh],
-        "validation_energy_kwh": [validation_energy_kwh],
-        "test_energy_kwh": [test_energy_kwh],
+        "test_energy_kwh_10_repeats": [test_energy_kwh],
         "description": None,
     })
 
@@ -264,4 +287,3 @@ if __name__ == "__main__":
             y_label="Target price",
             filename_suffix = "rf_test_pred_vs_targets"
             )
-

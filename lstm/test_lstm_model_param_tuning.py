@@ -26,7 +26,7 @@ RESULTS_CSV_PATH = PROJECT_ROOT / "lstm_search_results.csv"
 
 # Seasonal split and feature selection mode to evaluate. The feature set is
 # read from elasticnet_selected_features.json for this exact split and mode.
-SPLIT_INDEX = 0
+SPLIT_INDEX = 1
 SELECTION_MODE = "moderate"  # "aggressive", "moderate", or "none"
 
 def create_sequences(data, seq_length):
@@ -202,15 +202,8 @@ def train_model(
             checkpoint_status = ""
             epochs_without_improvement += 1
             if epochs_without_improvement >= patience:
-                print(f"Early stopping at epoch {epoch + 1} due to no improvement in validation RMSE.")
                 break
 
-        print(
-            f"Epoch [{epoch + 1}/{num_epochs}], "
-            f"Loss: {loss.item():.4f}, "
-            f"Validation RMSE: {validation_rmse:.4f}"
-            f"{checkpoint_status}"
-        )
 
 
 def get_criterion(loss_name):
@@ -423,7 +416,6 @@ def run_search(
         np.random.seed(random_state)
 
         config = {**config, "search_method": method}
-        print(f"{method.capitalize()} search {index}/{len(configs)}: {config}")
 
         result = train_and_score(
             config=config,
@@ -437,7 +429,6 @@ def run_search(
             device=device,
         )
         results.append(result)
-        print(f"Validation RMSE: {result['validation_rmse']:.4f}")
 
     if not results:
         raise ValueError("Search produced no configurations to evaluate.")
@@ -451,7 +442,6 @@ def run_search(
 
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
 
     (
         data,
@@ -465,11 +455,6 @@ if __name__ == "__main__":
         selection_metadata,
     ) = load_dataset()
 
-    print(
-        f"Feature selection: split {SPLIT_INDEX} / {SELECTION_MODE} "
-        f"({len(feature_columns)} of {selection_metadata['n_features_total']} "
-        "features)"
-    )
 
     feature_data = data[feature_columns]
     target_data = data["target_price_delta"]
@@ -559,8 +544,8 @@ if __name__ == "__main__":
     "patience": [10],
     }
 
-    #search_method = "grid"
-    search_method = "random"
+    search_method = "grid"
+    #search_method = "random"
 
     if search_method == "grid":
         ####  Grid search
@@ -579,7 +564,6 @@ if __name__ == "__main__":
             method="grid",
         )
 
-        print(f"Total grid-search energy: {search_energy_kwh:.9f} kWh")
         results["search_energy_kwh"] = search_energy_kwh
 
         results.to_csv(
@@ -588,8 +572,6 @@ if __name__ == "__main__":
         )
 
         best_result = results.iloc[0]
-        print("Best configuration:")
-        print(best_result)
 
 
 
@@ -621,8 +603,6 @@ if __name__ == "__main__":
         )
 
         best_result = results.iloc[0]
-        print("Best configuration:")
-        print(best_result)
 
 
     best_config = best_result.to_dict()
@@ -699,10 +679,6 @@ if __name__ == "__main__":
         test_anchors,
     )
 
-    print(f"Test R²: {test_metrics[0]:.4f}")
-    print(f"Test RMSE: {test_metrics[1]:.4f}")
-    print(f"Test MAE: {test_metrics[2]:.4f}")
-    print(f"Test prediction energy: {test_energy_kwh:.9f} kWh")
 
 
 

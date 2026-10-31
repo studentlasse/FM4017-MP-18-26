@@ -206,10 +206,6 @@ def run_search(
     fitted_models = []
 
     for index, config in enumerate(configs, start=1):
-        print(
-            f"{method.capitalize()} search "
-            f"{index}/{len(configs)}: {config}"
-        )
 
         result = train_and_score_model(
             model_factory=model_factory,
@@ -224,7 +220,6 @@ def run_search(
         fitted_models.append(result.pop("model"))
         results.append({**result, "search_method": method})
 
-        print(f"Validation RMSE: {result['validation_rmse']:.4f}")
 
     if not results:
         raise ValueError("Search produced no configurations to evaluate.")
@@ -254,11 +249,6 @@ if __name__ == "__main__":
     (data, feature_columns, train_mask, test_mask, data_filter, forecast_horizon,
      feature_set_name, delivery_days, selection_metadata) = load_dataset()
 
-    print(
-        f"Feature selection: split {SPLIT_INDEX} / {SELECTION_MODE} "
-        f"({len(feature_columns)} of {selection_metadata['n_features_total']} "
-        "features)"
-    )
 
     feature_data = data[feature_columns]
     target_data = data['target_price_delta']
@@ -311,7 +301,6 @@ if __name__ == "__main__":
         random_state=42,
         )
 
-        print(f"Total grid-search energy: {search_energy_kwh:.9f} kWh")
         results["tuning_energy_kwh"] = search_energy_kwh
         results.to_csv("rf_random_search_results.csv", index=False)
     
@@ -329,7 +318,6 @@ if __name__ == "__main__":
             method="grid",
         )
 
-        print(f"Total grid-search energy: {search_energy_kwh:.9f} kWh")
         results["tuning_energy_kwh"] = search_energy_kwh
         results.to_csv("rf_grid_search_results.csv", index=False)
 
@@ -368,13 +356,8 @@ if __name__ == "__main__":
             "importance": best_model.feature_importances_,
         }
     ).sort_values("importance", ascending=False)
-    print(importance.head(20))
 
 
-    print(f"Test R²: {test_metrics[1]:.4f}")
-    print(f"Test RMSE: {test_metrics[0]:.4f}")
-    print(f"Test MAE: {test_metrics[2]:.4f}")
-    print(f"Test prediction energy consumption: {test_energy_kwh:.9f} kWh")
 
     results_df = pd.DataFrame({
         "data_filter": data_filter,

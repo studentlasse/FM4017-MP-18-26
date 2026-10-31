@@ -19,12 +19,12 @@ from feature_sets import load_feature_set, load_feature_set_metadata
 from plotter.result_plotter import plot_results
 
 DATASET_PATH = PROJECT_ROOT / "ml_dataset.csv"
-RESULTS_CSV_PATH = PROJECT_ROOT / "lstm_results.csv"
+RESULTS_CSV_PATH = PROJECT_ROOT / "results/lstm_results.csv"
 
 # Seasonal split and feature selection mode to evaluate. The feature set is
 # read from elasticnet_selected_features.json for this exact split and mode.
 SPLIT_INDEX = 1
-SELECTION_MODE = "none"  # "aggressive", "moderate", or "none"
+SELECTION_MODE = "moderate"  # "aggressive", "moderate", or "none"
 VALIDATION_FRACTION = 0.15
 TRAIN_FRACTION = 1.0 - VALIDATION_FRACTION
 
@@ -194,15 +194,8 @@ def train_model(
             checkpoint_status = ""
             epochs_without_improvement += 1
             if epochs_without_improvement >= patience:
-                print(f"Early stopping at epoch {epoch + 1} due to no improvement in validation RMSE.")
                 break
 
-        print(
-            f"Epoch [{epoch + 1}/{num_epochs}], "
-            f"Loss: {loss.item():.4f}, "
-            f"Validation RMSE: {validation_rmse:.4f}"
-            f"{checkpoint_status}"
-        )
 
 def predict(model, data):
     model.eval()  
@@ -229,6 +222,30 @@ def evaluate_model(model, data, targets, target_scaler, anchors):
     mae = mean_absolute_error(targets, predictions)
 
     return r2, rmse, mae
+
+def repeated_test_evaluation(
+        model,
+        data,
+        targets,
+        target_scaler,
+        anchors,
+        repeats=10,
+    ):
+    metrics = []
+
+    for _ in range(repeats):
+        metrics.append(
+            evaluate_model(
+                model,
+                data,
+                targets,
+                target_scaler,
+                anchors,
+            )
+        )
+
+    metrics = np.array(metrics)
+    return metrics.mean(axis=0), metrics.std(axis=0)
 
 def lstm_feature_importance(
     model,
@@ -288,7 +305,6 @@ def lstm_feature_importance(
 
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
 
     (
         data,
@@ -302,11 +318,6 @@ if __name__ == "__main__":
         selection_metadata,
     ) = load_dataset()
 
-    print(
-        f"Feature selection: split {SPLIT_INDEX} / {SELECTION_MODE} "
-        f"({len(feature_columns)} of {selection_metadata['n_features_total']} "
-        "features)"
-    )
 
     feature_data = data[feature_columns]
     target_data = data["target_price_delta"]
@@ -436,32 +447,24 @@ if __name__ == "__main__":
     )
     checkpoint = torch.load(model_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state_dict"])
-    validation_score, validation_energy_kwh = measure_energy(
-        evaluate_model,
+    validation_score = evaluate_model(
         model,
         validation_data,
         validation_targets,
         target_scaler,
         validation_anchors,
     )
-    test_metrics, test_energy_kwh = measure_energy(
-        evaluate_model,
+
+    (test_metrics, test_metrics_std), test_energy_kwh = measure_energy(
+        repeated_test_evaluation,
         model,
         test_data,
         test_targets,
         target_scaler,
         test_anchors,
+        repeats=10,
     )
 
-    print(f"Validation R²: {validation_score[0]:.4f}")
-    print(f"Validation RMSE: {validation_score[1]:.4f}")
-    print(f"Validation MAE: {validation_score[2]:.4f}")
-    print(f"Test R²: {test_metrics[0]:.4f}")
-    print(f"Test RMSE: {test_metrics[1]:.4f}")
-    print(f"Test MAE: {test_metrics[2]:.4f}")
-    print(f"Training energy consumption: {training_energy_kwh:.9f} kWh")
-    print(f"Validation energy consumption: {validation_energy_kwh:.9f} kWh")
-    print(f"Test prediction energy consumption: {test_energy_kwh:.9f} kWh")
     
     results_df = pd.DataFrame({
         "data_filter": data_filter,
@@ -475,8 +478,7 @@ if __name__ == "__main__":
         "test_rmse": [test_metrics[1]],
         "test_mae": [test_metrics[2]],
         "training_energy_kwh": [training_energy_kwh],
-        "validation_energy_kwh": [validation_energy_kwh],
-        "test_energy_kwh": [test_energy_kwh],
+        "test_energy_kwh_10_repeats": [test_energy_kwh],
         "description": None,
     })
 
