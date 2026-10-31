@@ -20,6 +20,7 @@ from plotter.result_plotter import plot_results
 
 DATASET_PATH = PROJECT_ROOT / "ml_dataset.csv"
 RESULTS_CSV_PATH = PROJECT_ROOT / "results/gru_results.csv"
+TEST_REPEATS = 100
 
 # Seasonal split and feature selection mode to evaluate. The feature set is
 # read from elasticnet_selected_features.json for this exact split and mode.
@@ -139,6 +140,12 @@ def measure_energy(operation, *args, **kwargs):
     energy_kwh = tracker.final_emissions_data.energy_consumed
     return result, energy_kwh
 
+
+def measure_repeated_test_energy(operation, *args, repeats, **kwargs):
+    """Measure one tracker around a warmed-up repeated test workload."""
+    operation(*args, repeats=1, **kwargs)
+    return measure_energy(operation, *args, repeats=repeats, **kwargs)
+
 def train_model(
     model,
     data,
@@ -233,7 +240,7 @@ def repeated_test_evaluation(
         targets,
         target_scaler,
         anchors,
-        repeats=10,
+        repeats=TEST_REPEATS,
     ):
 
     metrics = []
@@ -460,14 +467,14 @@ if __name__ == "__main__":
         validation_anchors,
     )
 
-    (test_metrics, test_metrics_std), test_energy_kwh = measure_energy(
+    (test_metrics, test_metrics_std), test_energy_kwh = measure_repeated_test_energy(
         repeated_test_evaluation,
         model,
         test_data,
         test_targets,
         target_scaler,
         test_anchors,
-        repeats=10
+        repeats=TEST_REPEATS
     )
 
 
@@ -483,9 +490,17 @@ if __name__ == "__main__":
         "test_r2": [test_metrics[0]],
         "test_rmse": [test_metrics[1]],
         "test_mae": [test_metrics[2]],
+        "test_r2_std": [test_metrics_std[0]],
+        "test_rmse_std": [test_metrics_std[1]],
+        "test_mae_std": [test_metrics_std[2]],
         "training_energy_kwh": [training_energy_kwh],
-        "test_energy_kwh_10_repeats": [test_energy_kwh],
-        "description": None,
+        "test_energy_kwh_total": [test_energy_kwh],
+        "test_energy_kwh_per_run": [test_energy_kwh / TEST_REPEATS],
+        "test_repeats": [TEST_REPEATS],
+        "description": (
+            "Training energy is one complete training run including per-epoch "
+            "validation; test energy is the total for repeated evaluations."
+        ),
     })
 
     parameters_df = pd.DataFrame([
@@ -493,6 +508,7 @@ if __name__ == "__main__":
     ])
     results_df = pd.concat([results_df, parameters_df], axis=1)
 
+    RESULTS_CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
     write_to_csv(results_df, RESULTS_CSV_PATH)
 
     test_predictions = target_scaler.inverse_transform(
