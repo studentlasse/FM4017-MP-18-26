@@ -14,7 +14,7 @@ from torch.utils.data import TensorDataset, DataLoader
 from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
 
 from gru.gru_model import GRUModel
-from logger.csv_logger import write_to_csv
+from logger.csv_logger import write_to_csv, save_plot_csv
 from feature_sets import load_feature_set, load_feature_set_metadata
 from plotter.result_plotter import plot_results
 
@@ -23,11 +23,14 @@ import random
 
 DATASET_PATH = PROJECT_ROOT / "ml_dataset.csv"
 RESULTS_CSV_PATH = PROJECT_ROOT / "gru_search_results.csv"
+TEST_REPEATS = 100
 
 # Seasonal split and feature selection mode to evaluate. The feature set is
 # read from elasticnet_selected_features.json for this exact split and mode.
 SPLIT_INDEX = 0
 SELECTION_MODE = "moderate"  # "aggressive", "moderate", or "none"
+VALIDATION_FRACTION = 0.15
+TRAIN_FRACTION = 1.0 - VALIDATION_FRACTION
 
 def create_sequences(data, seq_length):
     """Create sequences of data for GRU input."""
@@ -142,6 +145,11 @@ def measure_energy(operation, *args, **kwargs):
     energy_kwh = tracker.final_emissions_data.energy_consumed
     return result, energy_kwh
 
+def measure_repeated_test_energy(operation, *args, repeats, **kwargs):
+    """Measure one tracker around a warmed-up repeated test workload."""
+    operation(*args, repeats=1, **kwargs)
+    return measure_energy(operation, *args, repeats=repeats, **kwargs)
+
 def train_model(
     model,
     data,
@@ -202,15 +210,8 @@ def train_model(
             checkpoint_status = ""
             epochs_without_improvement += 1
             if epochs_without_improvement >= patience:
-                print(f"Early stopping at epoch {epoch + 1} due to no improvement in validation RMSE.")
                 break
 
-        print(
-            f"Epoch [{epoch + 1}/{num_epochs}], "
-            f"Loss: {loss.item():.4f}, "
-            f"Validation RMSE: {validation_rmse:.4f}"
-            f"{checkpoint_status}"
-        )
 
 
 def get_criterion(loss_name):
@@ -247,6 +248,30 @@ def evaluate_model(model, data, targets, target_scaler, anchors):
     mae = mean_absolute_error(targets, predictions)
 
     return r2, rmse, mae
+
+def repeated_test_evaluation(
+        model,
+        data,
+        targets,
+        target_scaler,
+        anchors,
+        repeats=TEST_REPEATS,
+    ):
+    metrics = []
+
+    for _ in range(repeats):
+        metrics.append(
+            evaluate_model(
+                model,
+                data,
+                targets,
+                target_scaler,
+                anchors,
+            )
+        )
+
+    metrics = np.array(metrics)
+    return metrics.mean(axis=0), metrics.std(axis=0)
 
 def gru_feature_importance(
     model,
@@ -426,7 +451,6 @@ def run_search(
         np.random.seed(random_state)
 
         config = {**config, "search_method": method}
-        print(f"{method.capitalize()} search {index}/{len(configs)}: {config}")
 
         result = train_and_score(
             config=config,
@@ -440,7 +464,6 @@ def run_search(
             device=device,
         )
         results.append(result)
-        print(f"Validation RMSE: {result['validation_rmse']:.4f}")
 
     if not results:
         raise ValueError("Search produced no configurations to evaluate.")
@@ -454,7 +477,6 @@ def run_search(
 
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
 
     (
         data,
@@ -468,11 +490,6 @@ if __name__ == "__main__":
         selection_metadata,
     ) = load_dataset()
 
-    print(
-        f"Feature selection: split {SPLIT_INDEX} / {SELECTION_MODE} "
-        f"({len(feature_columns)} of {selection_metadata['n_features_total']} "
-        "features)"
-    )
 
     feature_data = data[feature_columns]
     target_data = data["target_price_delta"]
@@ -483,7 +500,7 @@ if __name__ == "__main__":
     test_data_all = feature_data.loc[test_mask]
     test_targets_all = target_data.loc[test_mask]
     test_anchors_all = anchor_data.loc[test_mask]
-    validation_end = int(len(train_data_all) * 0.85)
+    validation_end = int(len(train_data_all) * TRAIN_FRACTION)
     train_data = train_data_all.iloc[:validation_end]
     train_targets = train_targets_all.iloc[:validation_end]
     train_anchors = train_anchors_all.iloc[:validation_end]
@@ -551,12 +568,11 @@ if __name__ == "__main__":
         anchor_data=test_anchor_values,
     )
 
-
     search_space = {
-    "hidden_size": [16, 32, 64],
-    "num_layers": [1, 2],
-    "learning_rate": [0.003, 0.01, 0.03],
-    "loss_name": ["mae"],
+    "hidden_size": [16, 32, 64, 128],
+    "num_layers": [1, 2, 3],
+    "learning_rate": [0.001, 0.02, 0.03, 0.01],
+    "loss_name": ["mae", "mse", "smooth_l1"],
     "sequence_length": [24],
     "num_epochs": [50],
     "patience": [10],
@@ -584,7 +600,6 @@ if __name__ == "__main__":
         method="grid",
         )
 
-        print(f"Total grid-search energy: {search_energy_kwh:.9f} kWh")
         results["search_method"] = "grid"
         results["tuning_energy_kwh"] = search_energy_kwh
 
@@ -594,8 +609,6 @@ if __name__ == "__main__":
         )
 
         best_result = results.iloc[0]
-        print("Best configuration:")
-        print(best_result)
 
 
 
@@ -614,12 +627,11 @@ if __name__ == "__main__":
         checkpoint_dir=PROJECT_ROOT / "gru_checkpoints",
         device=device,
         method="random",
-        n_iter=10,
+        n_iter=100,
         random_state=42,
         )
 
 
-        print(f"Total random-search energy: {search_energy_kwh:.9f} kWh")
         results["search_method"] = "random"
         results["tuning_energy_kwh"] = search_energy_kwh
 
@@ -629,8 +641,6 @@ if __name__ == "__main__":
         )
 
         best_result = results.iloc[0]
-        print("Best configuration:")
-        print(best_result)
 
 
     best_config = best_result.to_dict()
@@ -678,6 +688,7 @@ if __name__ == "__main__":
                 num_epochs=best_config["num_epochs"],
                 patience=best_config["patience"],
                 learning_rate=best_config["learning_rate"],
+                loss_name=best_config["loss_name"],
                 model_path=tuned_checkpoint_path,
             )
 
@@ -688,8 +699,7 @@ if __name__ == "__main__":
     )
     best_model.load_state_dict(checkpoint["model_state_dict"])
 
-    validation_score, validation_energy_kwh = measure_energy(
-        evaluate_model, 
+    validation_score = evaluate_model(
         best_model,
         validation_data,
         validation_targets,
@@ -697,19 +707,24 @@ if __name__ == "__main__":
         validation_anchors
     )
 
-    test_metrics, test_energy_kwh = measure_energy(
-        evaluate_model,
-        best_model,
-        test_data,
-        test_targets,
-        target_scaler,
-        test_anchors,
-    )
+    # test_metrics, test_energy_kwh = measure_energy(
+    #     evaluate_model,
+    #     best_model,
+    #     test_data,
+    #     test_targets,
+    #     target_scaler,
+    #     test_anchors,
+    # )
 
-    print(f"Test R²: {test_metrics[0]:.4f}")
-    print(f"Test RMSE: {test_metrics[1]:.4f}")
-    print(f"Test MAE: {test_metrics[2]:.4f}")
-    print(f"Test prediction energy: {test_energy_kwh:.9f} kWh")
+    (test_metrics, test_metrics_std), test_energy_kwh = measure_repeated_test_energy(
+    repeated_test_evaluation,
+    best_model,
+    test_data,
+    test_targets,
+    target_scaler,
+    test_anchors,
+    repeats=TEST_REPEATS,
+    )   
 
     results_df = pd.DataFrame({
         "data_filter": data_filter,
@@ -724,11 +739,18 @@ if __name__ == "__main__":
         "test_r2": [test_metrics[0]],
         "test_rmse": [test_metrics[1]],
         "test_mae": [test_metrics[2]],
+        "test_r2_std": [test_metrics_std[0]],
+        "test_rmse_std": [test_metrics_std[1]],
+        "test_mae_std": [test_metrics_std[2]],
         "training_energy_kwh": [training_energy_kwh],
-        "validation_energy_kwh": [validation_energy_kwh],
-        "test_energy_kwh": [test_energy_kwh],
+        "test_energy_kwh_total": [test_energy_kwh],
+        "test_energy_kwh_per_run": [test_energy_kwh / TEST_REPEATS],
+        "test_repeats": [TEST_REPEATS],
         "search_energy_kwh": [search_energy_kwh],
-        "description": f"Best model from {search_method} search",
+         "description": (
+            "Training energy is one complete training run including per-epoch "
+            "validation; test energy is the total for repeated evaluations."
+        ),
         "best_param_hidden_size": best_config["hidden_size"],
         "best_param_num_layers": best_config["num_layers"],
         "best_param_learning_rate": best_config["learning_rate"],
@@ -747,6 +769,18 @@ if __name__ == "__main__":
         test_targets.cpu().numpy()
     ).ravel() + test_anchors.numpy().ravel()
 
+    plot_data = pd.DataFrame({
+            "delivery_day": pd.to_datetime(delivery_days.loc[test_mask]).to_numpy(),
+            "test_prediction": test_predictions,
+            "test_target": test_targets_plot,
+            })
+        
+    split_name = f"split_{SPLIT_INDEX}"
+    feature_info = f"{SELECTION_MODE}_{len(feature_columns)}features"
+
+    plot_data_description = (f"_gru_tuning_{split_name}_{feature_info}")
+
+    save_plot_csv(plot_data, plot_data_description)
 
     plot_results(
         delivery_days.loc[test_mask].to_numpy(),

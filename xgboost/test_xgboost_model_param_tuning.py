@@ -9,7 +9,7 @@ import numpy as np
 from codecarbon import OfflineEmissionsTracker
 from xgboost import XGBRegressor
 from sklearn.metrics import r2_score, root_mean_squared_error, mean_absolute_error
-from logger.csv_logger import write_to_csv
+from logger.csv_logger import write_to_csv, save_plot_csv
 from feature_sets import load_feature_set, load_feature_set_metadata
 from plotter.result_plotter import plot_results
 
@@ -20,11 +20,14 @@ import random
 
 DATASET_PATH = PROJECT_ROOT / "ml_dataset.csv"
 RESULTS_CSV_PATH = PROJECT_ROOT / "xgboost_search_results.csv"
+TEST_REPEATS = 100
 
 # Seasonal split and feature selection mode to evaluate. The feature set is
 # read from elasticnet_selected_features.json for this exact split and mode.
 SPLIT_INDEX = 0
 SELECTION_MODE = "moderate"  # "aggressive", "moderate", or "none"
+VALIDATION_FRACTION = 0.15
+TRAIN_FRACTION = 1.0 - VALIDATION_FRACTION
 
 def load_dataset(file_path=DATASET_PATH):
     data = pd.read_csv(file_path)
@@ -115,12 +118,17 @@ def measure_energy(operation, *args, **kwargs):
     energy_kwh = tracker.final_emissions_data.energy_consumed
     return result, energy_kwh
 
+def measure_repeated_test_energy(operation, *args, repeats, **kwargs):
+    """Measure one tracker around a warmed-up repeated test workload."""
+    operation(*args, repeats=1, **kwargs)
+    return measure_energy(operation, *args, repeats=repeats, **kwargs)
+
 def train_model(model, X_train, y_train, X_validation, y_validation):
     model.fit(
         X_train,
         y_train,
         eval_set=[(X_validation, y_validation)],
-        verbose=True,
+        verbose=False,
     )
     return model
 
@@ -142,6 +150,27 @@ def evaluate_model(model, data, targets, anchors):
 
     return rmse, r2, mae
 
+def repeated_test_evaluation(
+        model,
+        data,
+        targets,
+        anchors,
+        repeats=TEST_REPEATS,
+    ):
+    metrics = []
+
+    for _ in range(repeats):
+        metrics.append(
+            evaluate_model(
+                model,
+                data,
+                targets,
+                anchors,
+            )
+        )
+
+    metrics = np.array(metrics)
+    return metrics.mean(axis=0), metrics.std(axis=0)
 
 def train_and_score_model(
     model_factory,
@@ -211,10 +240,6 @@ def run_search(
     fitted_models = []
 
     for index, config in enumerate(configs, start=1):
-        print(
-            f"{method.capitalize()} search "
-            f"{index}/{len(configs)}: {config}"
-        )
 
         result = train_and_score_model(
             model_factory=model_factory,
@@ -229,7 +254,6 @@ def run_search(
         fitted_models.append(result.pop("model"))
         results.append({**result, "search_method": method})
 
-        print(f"Validation RMSE: {result['validation_rmse']:.4f}")
 
     if not results:
         raise ValueError("Search produced no configurations to evaluate.")
@@ -256,6 +280,7 @@ def make_xgboost(config):
         min_child_weight=float(config["min_child_weight"]),
         reg_lambda=float(config["reg_lambda"]),
         random_state=42,
+        early_stopping_rounds=int(config["early_stopping_rounds"]),
         n_jobs=-1,
     )
 
@@ -264,11 +289,6 @@ if __name__ == "__main__":
     (data, feature_columns, train_mask, test_mask, data_filter, forecast_horizon,
      feature_set_name, delivery_days, selection_metadata) = load_dataset()
 
-    print(
-        f"Feature selection: split {SPLIT_INDEX} / {SELECTION_MODE} "
-        f"({len(feature_columns)} of {selection_metadata['n_features_total']} "
-        "features)"
-    )
 
     feature_data = data[feature_columns]
     target_data = data['target_price_delta']
@@ -284,7 +304,7 @@ if __name__ == "__main__":
     test_anchors = anchor_data.loc[test_mask]
     test_delivery_days = delivery_days.iloc[test_mask]
 
-    validation_end = int(len(train_data_all) * 0.85)
+    validation_end = int(len(train_data_all) * TRAIN_FRACTION)
 
     train_data = train_data_all.iloc[:validation_end]
     train_targets = train_targets_all.iloc[:validation_end]
@@ -296,17 +316,18 @@ if __name__ == "__main__":
 
 
     search_space = {
-    "n_estimators": [100, 300, 500, 1000],
-    "max_depth": [2, 3, 5, 7],
-    "learning_rate": [0.01, 0.03, 0.05, 0.1],
-    "subsample": [0.7, 0.85, 1.0],
-    "colsample_bytree": [0.7, 0.85, 1.0],
-    "min_child_weight": [1, 3, 5],
-    "reg_lambda": [1.0, 5.0, 10.0],
+    "n_estimators": [100, 300, 500],
+    "max_depth": [3, 5, 7],
+    "learning_rate": [0.03, 0.05, 0.1],
+    "subsample": [0.7, 0.85],
+    "colsample_bytree": [0.7, 0.85],
+    "min_child_weight": [2, 3],
+    "reg_lambda": [10.0],
+    "early_stopping_rounds": [20],
     }
 
-    #search_method = "grid"
-    search_method = "random"
+    search_method = "grid"
+    #search_method = "random"
 
     if search_method == "random":
         (results, xgb_models), search_energy_kwh = measure_energy(
@@ -319,11 +340,10 @@ if __name__ == "__main__":
             y_validation=validation_targets,
             validation_anchors=validation_anchors,
             method="random",
-            n_iter=5,
+            n_iter=100,
             random_state=42,
         )
 
-        print(f"Total grid-search energy: {search_energy_kwh:.9f} kWh")
         results["tuning_energy_kwh"] = search_energy_kwh
         results.to_csv("xgb_random_search_results.csv", index=False)
 
@@ -341,7 +361,6 @@ if __name__ == "__main__":
             method="grid",
         )
 
-        print(f"Total grid-search energy: {search_energy_kwh:.9f} kWh")
         results["tuning_energy_kwh"] = search_energy_kwh
         results.to_csv("xgb_grid_search_results.csv", index=False)
 
@@ -358,20 +377,28 @@ if __name__ == "__main__":
         validation_targets,
     )
 
-    validation_score, validation_energy_kwh = measure_energy(
-        evaluate_model, 
+    validation_score = evaluate_model(
         best_model,
         validation_data,
         validation_targets,
         validation_anchors,
     )
 
-    test_metrics, test_energy_kwh = measure_energy(
-        evaluate_model,
+    # test_metrics, test_energy_kwh = measure_energy(
+    #     evaluate_model,
+    #     best_model,
+    #     test_data,
+    #     test_targets,
+    #     test_anchors,
+    # )
+
+    (test_metrics, test_metrics_std), test_energy_kwh = measure_repeated_test_energy(
+        repeated_test_evaluation,
         best_model,
         test_data,
         test_targets,
         test_anchors,
+        repeats=TEST_REPEATS,
     )
 
     importance = pd.DataFrame(
@@ -380,13 +407,6 @@ if __name__ == "__main__":
             "importance": best_model.feature_importances_,
         }
     ).sort_values("importance", ascending=False)
-    print(importance.head(20))
-
-
-    print(f"Test R²: {test_metrics[1]:.4f}")
-    print(f"Test RMSE: {test_metrics[0]:.4f}")
-    print(f"Test MAE: {test_metrics[2]:.4f}")
-    print(f"Test prediction energy consumption: {test_energy_kwh:.9f} kWh")
 
     results_df = pd.DataFrame({
         "data_filter": data_filter,
@@ -401,11 +421,18 @@ if __name__ == "__main__":
         "test_r2": [test_metrics[1]],
         "test_rmse": [test_metrics[0]],
         "test_mae": [test_metrics[2]],
+        "test_r2_std": [test_metrics_std[0]],
+        "test_rmse_std": [test_metrics_std[1]],
+        "test_mae_std": [test_metrics_std[2]],
         "training_energy_kwh": [training_energy_kwh],
-        "validation_energy_kwh": [validation_energy_kwh],
-        "test_energy_kwh": [test_energy_kwh],
+        "test_energy_kwh_total": [test_energy_kwh],
+        "test_energy_kwh_per_run": [test_energy_kwh / TEST_REPEATS],
+        "test_repeats": [TEST_REPEATS],
         "search_energy_kwh": [search_energy_kwh],
-        "description": f"Best model from {search_method} search",
+        "description": (
+            "Training energy is one complete training run including per-epoch "
+            "validation; test energy is the total for repeated evaluations."
+        ),
         "best_param_n_estimators": best_config["n_estimators"],
         "best_param_max_depth": best_config["max_depth"],
         "best_param_learning_rate": best_config["learning_rate"],
@@ -413,12 +440,25 @@ if __name__ == "__main__":
         "best_param_colsample_bytree": best_config["colsample_bytree"],
         "best_param_min_child_weight": best_config["min_child_weight"],
         "best_param_reg_lambda": best_config["reg_lambda"],
+        "early_stopping_rounds": best_config["early_stopping_rounds"],
     })
     write_to_csv(results_df, RESULTS_CSV_PATH)
-    
 
     test_pred = best_model.predict(test_data) + test_anchors.to_numpy()
     test_targets_plot = test_targets.to_numpy() + test_anchors.to_numpy()
+
+    plot_data = pd.DataFrame({
+        "delivery_day": pd.to_datetime(test_delivery_days).to_numpy(),
+        "test_prediction": test_pred,
+        "test_target": test_targets_plot,
+    })
+
+    split_name = f"split_{SPLIT_INDEX}"
+    feature_info = f"{SELECTION_MODE}_{len(feature_columns)}features"
+
+    plot_data_description = (f"_xgboost_tuning_{split_name}_{feature_info}")
+
+    save_plot_csv(plot_data, plot_data_description)
 
     plot_results( 
             test_delivery_days, 
