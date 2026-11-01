@@ -538,10 +538,10 @@ if __name__ == "__main__":
 
 
     search_space = {
-    "hidden_size": [16, 32, 64],
-    "num_layers": [1, 2],
-    "learning_rate": [0.003, 0.01, 0.03],
-    "loss_name": ["mae"],
+    "hidden_size": [16, 32, 64, 128],
+    "num_layers": [1, 2, 3],
+    "learning_rate": [0.001, 0.02, 0.03, 0.01],
+    "loss_name": ["mae", "mse", "smooth_l1"],
     "sequence_length": [24],
     "num_epochs": [50],
     "patience": [10],
@@ -596,7 +596,7 @@ if __name__ == "__main__":
         checkpoint_dir=PROJECT_ROOT / "gru_checkpoints",
         device=device,
         method="random",
-        n_iter=10,
+        n_iter=100,
         random_state=42,
         )
 

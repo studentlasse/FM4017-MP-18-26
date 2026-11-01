@@ -283,8 +283,8 @@ if __name__ == "__main__":
         "max_features": [1.0, 0.7],
         }
 
-    #search_method = "grid"
-    search_method = "random"
+    search_method = "grid"
+    #search_method = "random"
 
     if search_method == "random":
         (results, rf_models), search_energy_kwh = measure_energy(
@@ -297,7 +297,7 @@ if __name__ == "__main__":
         y_validation=validation_targets,
         validation_anchors=validation_anchors,
         method="random",
-        n_iter=5,
+        n_iter=100,
         random_state=42,
         )
 

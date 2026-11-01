@@ -537,7 +537,7 @@ if __name__ == "__main__":
     search_space = {
     "hidden_size": [16, 32, 64, 128],
     "num_layers": [1, 2, 3],
-    "learning_rate": [0.001, 0.002, 0.02, 0.03, 0.01],
+    "learning_rate": [0.001, 0.02, 0.03, 0.01],
     "loss_name": ["mse", "mae", "smooth_l1"],
     "sequence_length": [24],
     "num_epochs": [50],
@@ -590,7 +590,7 @@ if __name__ == "__main__":
         checkpoint_dir=PROJECT_ROOT / "lstm_checkpoints",
         device=device,
         method="random",
-        n_iter=10,
+        n_iter=100,
         random_state=42,
         )
 
@@ -729,7 +729,7 @@ if __name__ == "__main__":
     plot_data_description = (f"_lstm_tuning_{split_name}_{feature_info}")
 
     save_plot_csv(plot_data, plot_data_description)
-    
+
     plot_results(
         delivery_days.loc[test_mask].to_numpy(),
         test_predictions,

@@ -120,7 +120,7 @@ def train_model(model, X_train, y_train, X_validation, y_validation):
         X_train,
         y_train,
         eval_set=[(X_validation, y_validation)],
-        verbose=True,
+        verbose=False,
     )
     return model
 
@@ -251,6 +251,7 @@ def make_xgboost(config):
         min_child_weight=float(config["min_child_weight"]),
         reg_lambda=float(config["reg_lambda"]),
         random_state=42,
+        early_stopping_rounds=int(config["early_stopping_rounds"]),
         n_jobs=-1,
     )
 
@@ -286,17 +287,18 @@ if __name__ == "__main__":
 
 
     search_space = {
-    "n_estimators": [100, 300, 500, 1000],
-    "max_depth": [2, 3, 5, 7],
-    "learning_rate": [0.01, 0.03, 0.05, 0.1],
-    "subsample": [0.7, 0.85, 1.0],
-    "colsample_bytree": [0.7, 0.85, 1.0],
-    "min_child_weight": [1, 3, 5],
-    "reg_lambda": [1.0, 5.0, 10.0],
+    "n_estimators": [100, 300, 500],
+    "max_depth": [3, 5, 7],
+    "learning_rate": [0.03, 0.05, 0.1],
+    "subsample": [0.7, 0.85],
+    "colsample_bytree": [0.7, 0.85],
+    "min_child_weight": [2],
+    "reg_lambda": [10.0],
+    "early_stopping_rounds": [20],
     }
 
-    #search_method = "grid"
-    search_method = "random"
+    search_method = "grid"
+    #search_method = "random"
 
     if search_method == "random":
         (results, xgb_models), search_energy_kwh = measure_energy(
@@ -309,7 +311,7 @@ if __name__ == "__main__":
             y_validation=validation_targets,
             validation_anchors=validation_anchors,
             method="random",
-            n_iter=5,
+            n_iter=100,
             random_state=42,
         )
 
@@ -396,6 +398,7 @@ if __name__ == "__main__":
         "best_param_colsample_bytree": best_config["colsample_bytree"],
         "best_param_min_child_weight": best_config["min_child_weight"],
         "best_param_reg_lambda": best_config["reg_lambda"],
+        "early_stopping_rounds": best_config["early_stopping_rounds"],
     })
     write_to_csv(results_df, RESULTS_CSV_PATH)
 
