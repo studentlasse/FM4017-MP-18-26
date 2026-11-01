@@ -23,11 +23,14 @@ import random
 
 DATASET_PATH = PROJECT_ROOT / "ml_dataset.csv"
 RESULTS_CSV_PATH = PROJECT_ROOT / "gru_search_results.csv"
+TEST_REPEATS = 100
 
 # Seasonal split and feature selection mode to evaluate. The feature set is
 # read from elasticnet_selected_features.json for this exact split and mode.
 SPLIT_INDEX = 0
 SELECTION_MODE = "moderate"  # "aggressive", "moderate", or "none"
+VALIDATION_FRACTION = 0.15
+TRAIN_FRACTION = 1.0 - VALIDATION_FRACTION
 
 def create_sequences(data, seq_length):
     """Create sequences of data for GRU input."""
@@ -142,6 +145,11 @@ def measure_energy(operation, *args, **kwargs):
     energy_kwh = tracker.final_emissions_data.energy_consumed
     return result, energy_kwh
 
+def measure_repeated_test_energy(operation, *args, repeats, **kwargs):
+    """Measure one tracker around a warmed-up repeated test workload."""
+    operation(*args, repeats=1, **kwargs)
+    return measure_energy(operation, *args, repeats=repeats, **kwargs)
+
 def train_model(
     model,
     data,
@@ -240,6 +248,30 @@ def evaluate_model(model, data, targets, target_scaler, anchors):
     mae = mean_absolute_error(targets, predictions)
 
     return r2, rmse, mae
+
+def repeated_test_evaluation(
+        model,
+        data,
+        targets,
+        target_scaler,
+        anchors,
+        repeats=TEST_REPEATS,
+    ):
+    metrics = []
+
+    for _ in range(repeats):
+        metrics.append(
+            evaluate_model(
+                model,
+                data,
+                targets,
+                target_scaler,
+                anchors,
+            )
+        )
+
+    metrics = np.array(metrics)
+    return metrics.mean(axis=0), metrics.std(axis=0)
 
 def gru_feature_importance(
     model,
@@ -468,7 +500,7 @@ if __name__ == "__main__":
     test_data_all = feature_data.loc[test_mask]
     test_targets_all = target_data.loc[test_mask]
     test_anchors_all = anchor_data.loc[test_mask]
-    validation_end = int(len(train_data_all) * 0.85)
+    validation_end = int(len(train_data_all) * TRAIN_FRACTION)
     train_data = train_data_all.iloc[:validation_end]
     train_targets = train_targets_all.iloc[:validation_end]
     train_anchors = train_anchors_all.iloc[:validation_end]
@@ -535,7 +567,6 @@ if __name__ == "__main__":
         context_data=preceding_test_context,
         anchor_data=test_anchor_values,
     )
-
 
     search_space = {
     "hidden_size": [16, 32, 64, 128],
@@ -657,6 +688,7 @@ if __name__ == "__main__":
                 num_epochs=best_config["num_epochs"],
                 patience=best_config["patience"],
                 learning_rate=best_config["learning_rate"],
+                loss_name=best_config["loss_name"],
                 model_path=tuned_checkpoint_path,
             )
 
@@ -667,8 +699,7 @@ if __name__ == "__main__":
     )
     best_model.load_state_dict(checkpoint["model_state_dict"])
 
-    validation_score, validation_energy_kwh = measure_energy(
-        evaluate_model, 
+    validation_score = evaluate_model(
         best_model,
         validation_data,
         validation_targets,
@@ -676,15 +707,24 @@ if __name__ == "__main__":
         validation_anchors
     )
 
-    test_metrics, test_energy_kwh = measure_energy(
-        evaluate_model,
-        best_model,
-        test_data,
-        test_targets,
-        target_scaler,
-        test_anchors,
-    )
+    # test_metrics, test_energy_kwh = measure_energy(
+    #     evaluate_model,
+    #     best_model,
+    #     test_data,
+    #     test_targets,
+    #     target_scaler,
+    #     test_anchors,
+    # )
 
+    (test_metrics, test_metrics_std), test_energy_kwh = measure_repeated_test_energy(
+    repeated_test_evaluation,
+    best_model,
+    test_data,
+    test_targets,
+    target_scaler,
+    test_anchors,
+    repeats=TEST_REPEATS,
+    )   
 
     results_df = pd.DataFrame({
         "data_filter": data_filter,
@@ -699,11 +739,18 @@ if __name__ == "__main__":
         "test_r2": [test_metrics[0]],
         "test_rmse": [test_metrics[1]],
         "test_mae": [test_metrics[2]],
+        "test_r2_std": [test_metrics_std[0]],
+        "test_rmse_std": [test_metrics_std[1]],
+        "test_mae_std": [test_metrics_std[2]],
         "training_energy_kwh": [training_energy_kwh],
-        "validation_energy_kwh": [validation_energy_kwh],
-        "test_energy_kwh": [test_energy_kwh],
+        "test_energy_kwh_total": [test_energy_kwh],
+        "test_energy_kwh_per_run": [test_energy_kwh / TEST_REPEATS],
+        "test_repeats": [TEST_REPEATS],
         "search_energy_kwh": [search_energy_kwh],
-        "description": f"Best model from {search_method} search",
+         "description": (
+            "Training energy is one complete training run including per-epoch "
+            "validation; test energy is the total for repeated evaluations."
+        ),
         "best_param_hidden_size": best_config["hidden_size"],
         "best_param_num_layers": best_config["num_layers"],
         "best_param_learning_rate": best_config["learning_rate"],
