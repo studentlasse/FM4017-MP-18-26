@@ -197,18 +197,26 @@ if __name__ == "__main__":
     validation_anchors = train_anchors_all.iloc[validation_end:]
 
     parameters = {
-            "n_estimators": 300,
-            "max_depth" : 2,
-            "learning_rate" : 0.03,
+            "n_estimators": 100,
+            "max_depth" : 3,
+            "learning_rate" : 0.05,
+            "subsample": 0.7,
+            "colsample_bytree": 0.85,
+            "min_child_weight": 3,
+            "reg_lambda": 10.0,
             "random_state": 42,
             "n_jobs": -1,
-            "early_stopping_rounds" : 200,
+            "early_stopping_rounds" : 20,
         }
 
     model = XGBRegressor(
         n_estimators=parameters["n_estimators"],
         max_depth=parameters["max_depth"],
         learning_rate=parameters["learning_rate"],
+        subsample=parameters["subsample"],
+        colsample_bytree=parameters["colsample_bytree"],
+        min_child_weight=parameters["min_child_weight"],
+        reg_lambda=parameters["reg_lambda"],
         random_state=parameters["random_state"],
         n_jobs=parameters["n_jobs"],
         early_stopping_rounds=parameters["early_stopping_rounds"],

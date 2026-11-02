@@ -365,7 +365,7 @@ if __name__ == "__main__":
         ).flatten()
         return scaled_features, scaled_targets, anchors.to_numpy()
 
-    seq_length = 24
+    seq_length = 24 # Number of time steps in each input sequence for the LSTM model
     train_features, train_target_values, train_anchor_values = scale_split(
         train_data, train_targets, train_anchors
     )
@@ -402,7 +402,7 @@ if __name__ == "__main__":
     )
 
     parameters = {
-        "hidden_size": 16,
+        "hidden_size": 128,
         "num_layers": 1,
         "output_size": 1,
         "num_epochs" : 50,
