@@ -227,5 +227,7 @@ ml_dataset.*
 *.pt
 
 #results
+results/
 *results.csv
 elasticnet_selected_features.json
+plots/
