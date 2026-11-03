@@ -562,7 +562,7 @@ def run_experiment(split_index, selection_mode, search_method="grid", n_iter=100
 
 if __name__ == "__main__":
     search_method = "random"  # "grid" or "random"
-    n_iter = 10  # for random search
+    n_iter = 100  # for random search
     random_state = 42
 
     all_results = []

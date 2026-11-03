@@ -912,7 +912,7 @@ if __name__ == "__main__":
         torch.backends.cudnn.benchmark = False # Disable cuDNN benchmark for reproducibility
 
     search_method = "random"  # "grid" or "random"
-    n_iter = 10  # for random search
+    n_iter = 100  # for random search
     random_state = 42
 
     all_results = []
