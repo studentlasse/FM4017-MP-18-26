@@ -326,10 +326,12 @@ def run_search(
 
     results = []
     fitted_models = []
+    config_energies = []
 
     for index, config in enumerate(configs, start=1):
 
-        result = train_and_score_model(
+        result, config_energy_kwh = measure_energy(
+            train_and_score_model,
             model_factory=model_factory,
             config=config,
             X_train=X_train,
@@ -338,6 +340,8 @@ def run_search(
             y_validation=y_validation,
             validation_anchors=validation_anchors,
         )
+        result["config_energy_kwh"] = float(config_energy_kwh)
+        config_energies.append(float(config_energy_kwh))
 
         fitted_models.append(result.pop("model"))
         results.append({**result, "search_method": method})
@@ -352,7 +356,7 @@ def run_search(
         .reset_index(drop=True)
     )
 
-    return results_df, fitted_models
+    return results_df, fitted_models, float(np.sum(config_energies))
 
 
 def make_xgboost(config):
@@ -429,8 +433,7 @@ def run_experiment(split_index, selection_mode, search_method="grid", n_iter=100
         / f"split_{split_index}_{selection_mode}"
     )
 
-    (results, _), search_energy_kwh = measure_energy(
-        run_search,
+    results, _, search_energy_kwh = run_search(
         model_factory=make_xgboost,
         search_space=search_space,
         X_train=train_data,
@@ -521,6 +524,7 @@ def run_experiment(split_index, selection_mode, search_method="grid", n_iter=100
         "best_run_index": [repeated_results["best_run_index"]],
         "best_run_seed": [repeated_results["best_run_seed"]],
         "search_energy_kwh": [search_energy_kwh],
+        "best_config_energy_kwh": [best_config.get("config_energy_kwh")],
         "description": (
             "The best configuration is retrained run_repeats times with "
             "different seeds; test metrics are the mean and std across those "

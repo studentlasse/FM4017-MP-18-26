@@ -623,6 +623,7 @@ def run_search(
         )
 
     results = []
+    config_energies = []
 
     for index, config in enumerate(configs, start=1):
         torch.manual_seed(random_state)
@@ -630,7 +631,8 @@ def run_search(
 
         config = {**config, "search_method": method}
 
-        result = train_and_score(
+        result, config_energy_kwh = measure_energy(
+            train_and_score,
             config=config,
             train_data=train_data,
             train_targets=train_targets,
@@ -641,16 +643,19 @@ def run_search(
             checkpoint_dir=checkpoint_dir,
             device=device,
         )
+        result["config_energy_kwh"] = float(config_energy_kwh)
+        config_energies.append(float(config_energy_kwh))
         results.append(result)
 
     if not results:
         raise ValueError("Search produced no configurations to evaluate.")
 
-    return (
+    results_df = (
         pd.DataFrame(results)
         .sort_values("validation_rmse")
         .reset_index(drop=True)
     )
+    return results_df, float(np.sum(config_energies))
 
 
 def run_experiment(split_index, selection_mode, device, search_method="grid", n_iter=100, random_state=42):
@@ -761,8 +766,7 @@ def run_experiment(split_index, selection_mode, device, search_method="grid", n_
         / f"split_{split_index}_{selection_mode}"
     )
 
-    results, search_energy_kwh = measure_energy(
-        run_search,
+    results, search_energy_kwh = run_search(
         search_space=search_space,
         train_data=train_data,
         train_targets=train_targets,
@@ -852,6 +856,7 @@ def run_experiment(split_index, selection_mode, device, search_method="grid", n_
         "best_run_index": [repeated_results["best_run_index"]],
         "best_run_seed": [repeated_results["best_run_seed"]],
         "search_energy_kwh": [search_energy_kwh],
+        "best_config_energy_kwh": [best_config.get("config_energy_kwh")],
          "description": (
             "The best configuration is retrained run_repeats times with "
             "different seeds; test metrics are the mean and std across those "
