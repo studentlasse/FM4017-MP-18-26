@@ -229,6 +229,7 @@ dataset_formats/benchmark_files/
 
 #results
 *results.csv
+results/
 elasticnet_selected_features.json
 
 # plots
