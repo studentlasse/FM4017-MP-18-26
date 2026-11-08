@@ -222,6 +222,7 @@ __marimo__/
 # Dataset
 Dataset/Nordpool
 ml_dataset.*
+dataset_formats/benchmark_files/
 
 #models
 *.pt
