@@ -230,3 +230,6 @@ dataset_formats/benchmark_files/
 #results
 *results.csv
 elasticnet_selected_features.json
+
+# plots
+plots/
