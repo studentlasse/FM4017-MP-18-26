@@ -845,7 +845,7 @@ def run_experiment(split_index, selection_mode, device, search_method="grid", n_
         "test_rmse": [test_metrics[1]],
         "test_mae": [test_metrics[2]],
         "test_r2_std": [test_metrics_std[0]],
-        "test_rmsd_std": [test_metrics_std[1]],
+        "test_rmse_std": [test_metrics_std[1]],
         "test_mae_std": [test_metrics_std[2]],
         "training_energy_kwh": [training_energy_kwh],
         "training_energy_kwh_total": [training_energy_kwh_total],
