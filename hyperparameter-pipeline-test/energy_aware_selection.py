@@ -80,6 +80,10 @@ SEARCH_COLUMNS = [
 # equivalent on prediction quality, and the cheapest one is selected.
 DEFAULT_TOLERANCES = (0.01, 0.02, 0.05, 0.10)
 
+# The measured Pareto plots are restricted to the summer split (split 1).
+SUMMER_SPLIT_INDEX = 1
+SUMMER_SPLIT_TITLE = "Summer 2025 (split 1)"
+
 
 def _read_tuning_csv(path):
     """Read a tuning CSV even when rows contain the newer ``best_config_energy_kwh``.
@@ -583,7 +587,7 @@ def _annotate_front_points(
 def plot_measured_pareto(
     measured, output_dir, performance_column, energy_column, energy_label
 ):
-    """Plot measured performance against the chosen energy basis."""
+    """Plot measured performance against the chosen energy basis for summer only."""
     import matplotlib
 
     matplotlib.use("Agg")
@@ -592,15 +596,21 @@ def plot_measured_pareto(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    measured = measured[measured["split_index"] == SUMMER_SPLIT_INDEX]
+    if measured.empty:
+        raise ValueError(
+            f"No measured rows for summer split {SUMMER_SPLIT_INDEX}"
+        )
+
     plt.rcParams.update(
         {
-            "font.size": 13,
-            "axes.titlesize": 16,
-            "axes.labelsize": 14,
-            "xtick.labelsize": 12,
-            "ytick.labelsize": 12,
-            "legend.fontsize": 10,
-            "figure.titlesize": 18,
+            "font.size": 16,
+            "axes.titlesize": 20,
+            "axes.labelsize": 18,
+            "xtick.labelsize": 15,
+            "ytick.labelsize": 15,
+            "legend.fontsize": 13,
+            "figure.titlesize": 22,
         }
     )
 
@@ -623,12 +633,7 @@ def plot_measured_pareto(
     }
     method_markers = {"grid": "o", "random": "^"}
 
-    fig, axes = plt.subplots(1, 3, figsize=(21, 7.2), sharey=False)
-    split_titles = {
-        0: "Split 0: entire timeline",
-        1: "Split 1: summer 2025",
-        2: "Split 2: winter 2025",
-    }
+    fig, axis = plt.subplots(figsize=(18, 12))
 
     model_short = {
         "gru": "GRU",
@@ -637,121 +642,111 @@ def plot_measured_pareto(
         "xgboost": "XGB",
     }
 
-    for axis, split_index in zip(axes, (0, 1, 2)):
-        subset = measured[measured["split_index"] == split_index]
+    for model, group in measured.groupby("model"):
+        for method, method_group in group.groupby("search_method"):
+            axis.scatter(
+                method_group[energy_column],
+                method_group[performance_column],
+                s=180,
+                color=model_colors.get(model, "grey"),
+                marker=method_markers.get(method, "o"),
+                edgecolor="black",
+                linewidth=1.0,
+                alpha=0.85,
+                label=f"{model_labels.get(model, model)} ({method})",
+                zorder=3,
+            )
 
-        for model, group in subset.groupby("model"):
-            for method, method_group in group.groupby("search_method"):
-                axis.scatter(
-                    method_group[energy_column],
-                    method_group[performance_column],
-                    s=95,
-                    color=model_colors.get(model, "grey"),
-                    marker=method_markers.get(method, "o"),
-                    edgecolor="black",
-                    linewidth=0.6,
-                    alpha=0.85,
-                    label=f"{model_labels.get(model, model)} ({method})",
-                    zorder=3,
-                )
+    front = pareto_front(measured, performance_column, energy_column)
+    axis.plot(
+        front[energy_column],
+        front[performance_column],
+        color="black",
+        linestyle="--",
+        linewidth=2.5,
+        marker="o",
+        markersize=8,
+        zorder=2,
+        label="Pareto front",
+    )
 
-        front = pareto_front(subset, performance_column, energy_column)
-        axis.plot(
-            front[energy_column],
-            front[performance_column],
-            color="black",
-            linestyle="--",
-            linewidth=1.6,
-            marker="o",
-            markersize=5,
-            zorder=2,
-            label="Pareto front",
-        )
+    axis.set_xscale("log")
+    axis.xaxis.set_major_locator(
+        LogLocator(base=10, subs=(1.0, 5.0), numticks=100)
+    )
+    axis.xaxis.set_minor_locator(
+        LogLocator(base=10, subs="auto", numticks=100)
+    )
+    axis.xaxis.set_minor_formatter(NullFormatter())
+    axis.set_title(SUMMER_SPLIT_TITLE, pad=12)
+    axis.set_xlabel(x_label)
+    axis.set_ylabel(y_label)
+    axis.grid(True, which="major", alpha=0.35)
+    axis.grid(True, which="minor", alpha=0.15)
+    axis.set_axisbelow(True)
+    axis.tick_params(which="major", length=8, width=1.5)
+    axis.tick_params(which="minor", length=4, width=1.0)
 
-        axis.set_xscale("log")
-        axis.xaxis.set_major_locator(
-            LogLocator(base=10, subs=(1.0, 5.0), numticks=100)
-        )
-        axis.xaxis.set_minor_locator(
-            LogLocator(base=10, subs="auto", numticks=100)
-        )
-        axis.xaxis.set_minor_formatter(NullFormatter())
-        axis.set_title(split_titles[split_index], pad=12)
-        axis.set_xlabel(x_label)
-        axis.set_ylabel(y_label)
-        axis.grid(True, which="major", alpha=0.35)
-        axis.grid(True, which="minor", alpha=0.15)
-        axis.set_axisbelow(True)
-        axis.tick_params(which="major", length=6, width=1.0)
-        axis.tick_params(which="minor", length=3, width=0.8)
+    # Draw once with all elements in place, then place front labels.
+    fig.canvas.draw()
+    _annotate_front_points(
+        axis,
+        front,
+        energy_column,
+        performance_column,
+        model_short,
+    )
 
-        # Draw once with all elements in place, then place front labels.
-        fig.canvas.draw()
-        _annotate_front_points(
-            axis,
-            front,
-            energy_column,
-            performance_column,
-            model_short,
-        )
-
-    handles, labels = axes[0].get_legend_handles_labels()
+    handles, labels = axis.get_legend_handles_labels()
     unique = dict(zip(labels, handles))
     fig.legend(
         unique.values(),
         unique.keys(),
         loc="lower center",
         ncol=5,
-        fontsize=11,
+        fontsize=15,
         frameon=False,
         bbox_to_anchor=(0.5, -0.01),
-        markerscale=1.2,
+        markerscale=1.5,
     )
     fig.suptitle(
-        f"Energy-aware selection: {metric_label} vs. {energy_label} energy",
-        fontsize=18,
+        f"Energy-aware selection: {metric_label} vs. {energy_label} energy "
+        "(summer 2025)",
+        fontsize=22,
         y=1.03,
     )
     fig.tight_layout(rect=(0, 0.07, 1, 1))
     by_split_path = output_dir / "energy_aware_pareto_by_split.png"
-    fig.savefig(by_split_path, dpi=200, bbox_inches="tight")
+    fig.savefig(by_split_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
-    # Overall view: all splits together. Split-specific test periods mean the
-    # absolute RMSE values are not directly comparable across splits.
-    fig, axis = plt.subplots(figsize=(13, 8))
-    split_colors = {0: "#111827", 1: "#2563eb", 2: "#d97706"}
-    split_names = {0: "Split 0", 1: "Split 1", 2: "Split 2"}
+    # Overall view: all models together, still restricted to the summer split.
+    fig, axis = plt.subplots(figsize=(18, 12))
 
     for model, group in measured.groupby("model"):
-        for method, method_group in group.groupby("search_method"):
-            axis.scatter(
-                method_group[energy_column],
-                method_group[performance_column],
-                s=105,
-                color=model_colors.get(model, "grey"),
-                marker=method_markers.get(method, "o"),
-                edgecolor="black",
-                linewidth=0.6,
-                alpha=0.85,
-                label=f"{model_labels.get(model, model)} ({method})",
-                zorder=3,
-            )
-
-    for split_index, split_group in measured.groupby("split_index"):
-        split_front = pareto_front(
-            split_group, performance_column, energy_column
+        color = model_colors.get(model, "grey")
+        label_base = model_labels.get(model, model)
+        axis.scatter(
+            group[energy_column],
+            group[performance_column],
+            s=200,
+            color=color,
+            alpha=0.35,
+            edgecolor="black",
+            linewidth=0.8,
+            zorder=3,
         )
+        model_front = pareto_front(group, performance_column, energy_column)
         axis.plot(
-            split_front[energy_column],
-            split_front[performance_column],
-            color=split_colors.get(split_index, "grey"),
+            model_front[energy_column],
+            model_front[performance_column],
+            color=color,
             linestyle="--",
-            linewidth=1.7,
+            linewidth=2.5,
             marker="o",
-            markersize=5,
+            markersize=8,
             zorder=2,
-            label=f"{split_names.get(split_index, split_index)} Pareto front",
+            label=f"{label_base} Pareto front",
         )
 
     axis.set_xscale("log")
@@ -760,31 +755,28 @@ def plot_measured_pareto(
     )
     axis.xaxis.set_minor_locator(LogLocator(base=10, subs="auto", numticks=100))
     axis.xaxis.set_minor_formatter(NullFormatter())
-    axis.set_title(
-        "Pareto fronts by split (split test periods differ)",
-        pad=12,
-    )
+    axis.set_title("Summer 2025 Pareto fronts by model", pad=16)
     axis.set_xlabel(x_label)
     axis.set_ylabel(y_label)
     axis.grid(True, which="major", alpha=0.35)
     axis.grid(True, which="minor", alpha=0.15)
     axis.set_axisbelow(True)
-    axis.tick_params(which="major", length=6, width=1.0)
-    axis.tick_params(which="minor", length=3, width=0.8)
+    axis.tick_params(which="major", length=8, width=1.5)
+    axis.tick_params(which="minor", length=4, width=1.0)
     handles, labels = axis.get_legend_handles_labels()
     fig.legend(
         handles,
         labels,
         loc="lower center",
         ncol=4,
-        fontsize=11,
+        fontsize=15,
         frameon=False,
         bbox_to_anchor=(0.5, 0.0),
-        markerscale=1.1,
+        markerscale=1.5,
     )
     fig.tight_layout(rect=(0, 0.12, 1, 1))
     overall_path = output_dir / "energy_aware_pareto_overall.png"
-    fig.savefig(overall_path, dpi=200, bbox_inches="tight")
+    fig.savefig(overall_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
     return by_split_path, overall_path
