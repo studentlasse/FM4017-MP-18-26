@@ -82,7 +82,6 @@ DEFAULT_TOLERANCES = (0.01, 0.02, 0.05, 0.10)
 
 # The measured Pareto plots are restricted to the summer split (split 1).
 SUMMER_SPLIT_INDEX = 1
-SUMMER_SPLIT_TITLE = "Summer 2025 (split 1)"
 
 
 def _read_tuning_csv(path):
@@ -511,7 +510,7 @@ def _annotate_front_points(
         (0, -30),
     ]
     label_style = dict(
-        fontsize=11,
+        fontsize=14,
         zorder=6,
         bbox=dict(
             boxstyle="round,pad=0.18",
@@ -604,13 +603,15 @@ def plot_measured_pareto(
 
     plt.rcParams.update(
         {
-            "font.size": 16,
-            "axes.titlesize": 20,
-            "axes.labelsize": 18,
-            "xtick.labelsize": 15,
-            "ytick.labelsize": 15,
-            "legend.fontsize": 13,
-            "figure.titlesize": 22,
+            "font.size": 18,
+            "axes.titlesize": 22,
+            "axes.labelsize": 21,
+            "xtick.labelsize": 18,
+            "ytick.labelsize": 18,
+            "legend.fontsize": 14,
+            "figure.titlesize": 24,
+            "pdf.fonttype": 42,
+            "ps.fonttype": 42,
         }
     )
 
@@ -633,7 +634,9 @@ def plot_measured_pareto(
     }
     method_markers = {"grid": "o", "random": "^"}
 
-    fig, axis = plt.subplots(figsize=(18, 12))
+    # Sized for a single-column report page: a narrower figure keeps the text
+    # large relative to the plot when scaled to \linewidth.
+    fig, axis = plt.subplots(figsize=(10.5, 8.0))
 
     model_short = {
         "gru": "GRU",
@@ -647,11 +650,11 @@ def plot_measured_pareto(
             axis.scatter(
                 method_group[energy_column],
                 method_group[performance_column],
-                s=180,
+                s=130,
                 color=model_colors.get(model, "grey"),
                 marker=method_markers.get(method, "o"),
                 edgecolor="black",
-                linewidth=1.0,
+                linewidth=1.1,
                 alpha=0.85,
                 label=f"{model_labels.get(model, model)} ({method})",
                 zorder=3,
@@ -665,7 +668,7 @@ def plot_measured_pareto(
         linestyle="--",
         linewidth=2.5,
         marker="o",
-        markersize=8,
+        markersize=7,
         zorder=2,
         label="Pareto front",
     )
@@ -678,7 +681,6 @@ def plot_measured_pareto(
         LogLocator(base=10, subs="auto", numticks=100)
     )
     axis.xaxis.set_minor_formatter(NullFormatter())
-    axis.set_title(SUMMER_SPLIT_TITLE, pad=12)
     axis.set_xlabel(x_label)
     axis.set_ylabel(y_label)
     axis.grid(True, which="major", alpha=0.35)
@@ -703,25 +705,22 @@ def plot_measured_pareto(
         unique.values(),
         unique.keys(),
         loc="lower center",
-        ncol=5,
-        fontsize=15,
+        ncol=3,
+        fontsize=13,
         frameon=False,
-        bbox_to_anchor=(0.5, -0.01),
-        markerscale=1.5,
+        bbox_to_anchor=(0.5, -0.04),
+        markerscale=1.3,
     )
-    fig.suptitle(
-        f"Energy-aware selection: {metric_label} vs. {energy_label} energy "
-        "(summer 2025)",
-        fontsize=22,
-        y=1.03,
-    )
-    fig.tight_layout(rect=(0, 0.07, 1, 1))
+    fig.tight_layout(rect=(0, 0.10, 1, 1))
     by_split_path = output_dir / "energy_aware_pareto_by_split.png"
     fig.savefig(by_split_path, dpi=300, bbox_inches="tight")
+    fig.savefig(
+        by_split_path.with_suffix(".pdf"), bbox_inches="tight"
+    )
     plt.close(fig)
 
     # Overall view: all models together, still restricted to the summer split.
-    fig, axis = plt.subplots(figsize=(18, 12))
+    fig, axis = plt.subplots(figsize=(10.5, 8.0))
 
     for model, group in measured.groupby("model"):
         color = model_colors.get(model, "grey")
@@ -729,11 +728,11 @@ def plot_measured_pareto(
         axis.scatter(
             group[energy_column],
             group[performance_column],
-            s=200,
+            s=140,
             color=color,
             alpha=0.35,
             edgecolor="black",
-            linewidth=0.8,
+            linewidth=0.9,
             zorder=3,
         )
         model_front = pareto_front(group, performance_column, energy_column)
@@ -755,7 +754,6 @@ def plot_measured_pareto(
     )
     axis.xaxis.set_minor_locator(LogLocator(base=10, subs="auto", numticks=100))
     axis.xaxis.set_minor_formatter(NullFormatter())
-    axis.set_title("Summer 2025 Pareto fronts by model", pad=16)
     axis.set_xlabel(x_label)
     axis.set_ylabel(y_label)
     axis.grid(True, which="major", alpha=0.35)
@@ -768,15 +766,18 @@ def plot_measured_pareto(
         handles,
         labels,
         loc="lower center",
-        ncol=4,
-        fontsize=15,
+        ncol=2,
+        fontsize=13,
         frameon=False,
-        bbox_to_anchor=(0.5, 0.0),
-        markerscale=1.5,
+        bbox_to_anchor=(0.5, -0.02),
+        markerscale=1.3,
     )
-    fig.tight_layout(rect=(0, 0.12, 1, 1))
+    fig.tight_layout(rect=(0, 0.14, 1, 1))
     overall_path = output_dir / "energy_aware_pareto_overall.png"
     fig.savefig(overall_path, dpi=300, bbox_inches="tight")
+    fig.savefig(
+        overall_path.with_suffix(".pdf"), bbox_inches="tight"
+    )
     plt.close(fig)
 
     return by_split_path, overall_path
