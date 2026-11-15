@@ -23,11 +23,12 @@ The project focuses on evaluating the trade-off between predictive quality and e
 
 ## Setup
 
-The repository does not ship a `pyproject.toml`, so install the dependency list into a `uv`-managed virtual environment:
+The repository does not ship a `pyproject.toml`, so install `requirements.txt` into a local virtual environment:
 
 ```bash
-uv venv
-uv pip install -r requirements.txt
+python -m venv .venv
+source .venv/bin/activate     # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
 All commands below assume they are run from the repository root.
@@ -39,11 +40,11 @@ Each stage writes the files the next stage consumes. Detailed instructions for e
 | Step | Stage | Command | Produces |
 | --- | --- | --- | --- |
 | 1 | Provide the data | `preprocessing/entso-e_data_gathering.ipynb` (ENTSO-E), plus the Nord Pool database | `Dataset/Nordpool/thesis_database.db`, `Dataset/Entso-E/entsoe_data_hourly.csv` |
-| 2 | Build the model dataset | `uv run python preprocessing/dataset_conversion.py` | `ml_dataset.csv` |
-| 3 | Select features | `uv run python preprocessing/run_elasticnet_selection.py` | `elasticnet_selected_features.json`, `elasticnet_selection_results.csv` |
-| 4 | Baseline model tests | `uv run python <model>/test_*.py` | `results/<model>_results.csv`, `plots/` |
-| 5 | Hyperparameter tuning | `uv run python hyperparameter-pipeline-test/run_all_tuning.py` | `results/*_tuning_results.csv`, `results/*_search_results_split*.csv` |
-| 6 | Energy-aware selection | `uv run python hyperparameter-pipeline-test/energy_aware_selection.py` | `results/energy_aware/*.csv`, `plots/energy_aware*.png/pdf` |
+| 2 | Build the model dataset | `python preprocessing/dataset_conversion.py` | `ml_dataset.csv` |
+| 3 | Select features | `python preprocessing/run_elasticnet_selection.py` | `elasticnet_selected_features.json`, `elasticnet_selection_results.csv` |
+| 4 | Baseline model tests | `python <model>/test_*.py` | `results/<model>_results.csv`, `plots/` |
+| 5 | Hyperparameter tuning | `python hyperparameter-pipeline-test/run_all_tuning.py` | `results/*_tuning_results.csv`, `results/*_search_results_split*.csv` |
+| 6 | Energy-aware selection | `python hyperparameter-pipeline-test/energy_aware_selection.py` | `results/energy_aware/*.csv`, `plots/energy_aware*.png/pdf` |
 
 ### Splits and feature sets
 
@@ -71,8 +72,8 @@ Two inputs are needed. The Nord Pool database must be supplied locally; the ENTS
 
    ```bash
    # Only needed to regenerate the forecast file
-   uv pip install entsoe-py python-dotenv
-   uv run --with jupyter jupyter notebook preprocessing/entso-e_data_gathering.ipynb
+   pip install jupyter entsoe-py python-dotenv
+   jupyter notebook preprocessing/entso-e_data_gathering.ipynb
    ```
 
    Add `ENTSO_API_KEY=<your key>` to a `.env` file in the repository root, then run all cells. The notebook queries day-ahead prices and wind/solar, generation, load and reservoir forecasts from the ENTSO-E Transparency Platform, normalises everything to hourly rows, and writes `entsoe_data_hourly.csv` into its working directory — move the result to `Dataset/Entso-E/`.
@@ -82,7 +83,7 @@ Two inputs are needed. The Nord Pool database must be supplied locally; the ENTS
 ## Step 2 – Build the model dataset
 
 ```bash
-uv run python preprocessing/dataset_conversion.py
+python preprocessing/dataset_conversion.py
 ```
 
 This queries the SQLite database, joins flows, capacities, neighbor prices and ENTSO-E forecasts, engineers calendar and lag features, and writes `ml_dataset.csv` to the repository root. Rows before `2024-10-01` are dropped to stay within the forecast data coverage.
@@ -90,7 +91,7 @@ This queries the SQLite database, joins flows, capacities, neighbor prices and E
 ## Step 3 – Run ElasticNet feature selection
 
 ```bash
-uv run python preprocessing/run_elasticnet_selection.py
+python preprocessing/run_elasticnet_selection.py
 ```
 
 Configuration is in the constants at the top of the script: `FEATURE_SET_NAME` (`"all"` uses every numeric column), `SPLIT_INDICES` (`None` runs all splits), `N_ALPHAS`, `CV_SPLITS`, and `TRAIN_RATIO`. Feature selection is fitted on the training window only (the first 85 % by default, matching the model validation split), so the test period never influences the result.
@@ -105,10 +106,10 @@ Outputs:
 Each model script holds its configuration as constants near the bottom of the file: `SPLIT_INDEX`, `SELECTION_MODE` and a `parameters` dict. Edit those to test a different split, feature set or configuration, then run:
 
 ```bash
-uv run python gru/test_gru_model.py
-uv run python lstm/test_lstm_model.py
-uv run python randomforest/test_randomforest_model.py
-uv run python xgbr/test_xgboost_model.py
+python gru/test_gru_model.py
+python lstm/test_lstm_model.py
+python randomforest/test_randomforest_model.py
+python xgbr/test_xgboost_model.py
 ```
 
 Outputs:
@@ -125,13 +126,13 @@ Energy is captured with CodeCarbon's `OfflineEmissionsTracker` (`country_iso_cod
 To tune every model on every split and feature set, using both grid and random search:
 
 ```bash
-uv run python hyperparameter-pipeline-test/run_all_tuning.py
+python hyperparameter-pipeline-test/run_all_tuning.py
 ```
 
 This runs `4 models × 3 splits × 3 feature sets × 2 search methods = 72` experiments and can take many hours. To tune a single model instead, run its tuning script directly:
 
 ```bash
-uv run python randomforest/test_randomforest_model_param_tuning.py
+python randomforest/test_randomforest_model_param_tuning.py
 ```
 
 The single-model scripts loop over `SPLIT_INDICES` × `SELECTION_MODES` defined at the top of the file; set `search_method` (and `n_iter` for random search) at the bottom of the file. `run_all_tuning.py` sets `N_ITER_RANDOM = 100`, `RANDOM_STATE = 42`.
@@ -146,7 +147,7 @@ Outputs per run:
 ## Step 6 – Energy-aware model selection
 
 ```bash
-uv run python hyperparameter-pipeline-test/energy_aware_selection.py
+python hyperparameter-pipeline-test/energy_aware_selection.py
 ```
 
 The script reads the tuning and per-configuration CSVs from `results/` and produces two comparisons:
@@ -158,18 +159,18 @@ Useful options:
 
 ```bash
 # Custom tolerances (fractional, e.g. 1% / 2% / 5% / 10% quality loss allowed)
-uv run python hyperparameter-pipeline-test/energy_aware_selection.py --tolerance 0.01 0.02 0.05
+python hyperparameter-pipeline-test/energy_aware_selection.py --tolerance 0.01 0.02 0.05
 
 # Which energy definition drives the selection
-uv run python hyperparameter-pipeline-test/energy_aware_selection.py --energy-basis deployment
+python hyperparameter-pipeline-test/energy_aware_selection.py --energy-basis deployment
 #   experiment | deployment | search | training | inference
 
 # Selection metric and IO locations
-uv run python hyperparameter-pipeline-test/energy_aware_selection.py --performance test_rmse
-uv run python hyperparameter-pipeline-test/energy_aware_selection.py --results-dir results --output-dir results/energy_aware --plot-dir plots
+python hyperparameter-pipeline-test/energy_aware_selection.py --performance test_rmse
+python hyperparameter-pipeline-test/energy_aware_selection.py --results-dir results --output-dir results/energy_aware --plot-dir plots
 
 # Skip plotting (matplotlib is only imported when plots are generated)
-uv run python hyperparameter-pipeline-test/energy_aware_selection.py --no-plot
+python hyperparameter-pipeline-test/energy_aware_selection.py --no-plot
 ```
 
 Outputs:
