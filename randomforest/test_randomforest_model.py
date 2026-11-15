@@ -217,13 +217,21 @@ if __name__ == "__main__":
     validation_anchors = train_anchors_all.iloc[validation_end:]
 
     parameters = {
-        "n_estimators": 300,
+        "n_estimators": 100,
+        "max_depth": 7,
+        "min_samples_split": 5,
+        "min_samples_leaf": 1,
+        "max_features": 0.7,
         "random_state": 42,
         "n_jobs": -1
     }
 
     model = RandomForestRegressor(
         n_estimators = parameters["n_estimators"],
+        max_depth = parameters["max_depth"],
+        min_samples_split = parameters["min_samples_split"],
+        min_samples_leaf = parameters["min_samples_leaf"],
+        max_features = parameters["max_features"],
         random_state = parameters["random_state"],
         n_jobs = parameters["n_jobs"],
     )

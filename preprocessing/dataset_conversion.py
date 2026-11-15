@@ -407,7 +407,9 @@ log(f"Completed in {time.time()-step:.2f}s")
 
 step = time.time()
 
-ENTSOE_START = pd.Timestamp("2023-10-01")
+# Match the ENTSO-E gathering window in
+# preprocessing/entso-e_data_gathering.ipynb.
+ENTSOE_START = pd.Timestamp("2024-10-01")
 before = len(dataset)
 dataset = dataset[dataset["delivery_day"] >= ENTSOE_START].copy()
 log(f"Dropped {before - len(dataset):,} rows before {ENTSOE_START.date()}")

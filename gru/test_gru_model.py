@@ -412,7 +412,7 @@ if __name__ == "__main__":
         "output_size": 1,
         "num_epochs" : 50,
         "patience" : 10,
-        "learning_rate" : 0.03,
+        "learning_rate" : 0.01,
     }
 
     torch.manual_seed(42)
