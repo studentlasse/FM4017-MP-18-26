@@ -77,7 +77,7 @@ Two inputs are needed. The Nord Pool database must be supplied locally; the ENTS
 
    Add `ENTSO_API_KEY=<your key>` to a `.env` file in the repository root, then run all cells. The notebook queries day-ahead prices and wind/solar, generation, load and reservoir forecasts from the ENTSO-E Transparency Platform, normalises everything to hourly rows, and writes `entsoe_data_hourly.csv` into its working directory — move the result to `Dataset/Entso-E/`.
 
-   Set the notebook's `start` to `2023-10-01` so the file matches `ENTSOE_START` in `preprocessing/dataset_conversion.py`; the shipped CSV covers `2023-10-01` through `2026-10-01` (Europe/Brussels).
+   The notebook's `start` is set to `2024-10-01`, matching `ENTSOE_START` in `preprocessing/dataset_conversion.py`; both use `2026-10-01` as the end of the window.
 
 ## Step 2 – Build the model dataset
 
@@ -85,7 +85,7 @@ Two inputs are needed. The Nord Pool database must be supplied locally; the ENTS
 uv run python preprocessing/dataset_conversion.py
 ```
 
-This queries the SQLite database, joins flows, capacities, neighbor prices and ENTSO-E forecasts, engineers calendar and lag features, and writes `ml_dataset.csv` to the repository root. Rows before `2023-10-01` are dropped to stay within the forecast data coverage.
+This queries the SQLite database, joins flows, capacities, neighbor prices and ENTSO-E forecasts, engineers calendar and lag features, and writes `ml_dataset.csv` to the repository root. Rows before `2024-10-01` are dropped to stay within the forecast data coverage.
 
 ## Step 3 – Run ElasticNet feature selection
 
