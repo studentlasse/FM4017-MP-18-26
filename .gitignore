@@ -222,12 +222,15 @@ __marimo__/
 # Dataset
 Dataset/Nordpool
 ml_dataset.*
+dataset_formats/benchmark_files/
 
 #models
 *.pt
 
 #results
-results/
 *results.csv
+results/
 elasticnet_selected_features.json
+
+# plots
 plots/
